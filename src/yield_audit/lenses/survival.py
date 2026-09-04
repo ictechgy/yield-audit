@@ -50,9 +50,15 @@ class SurvivalUnit:
     path: str
     kind: str
     added: int
+    share: float = 1.0  # attribution share; contested commits sum to 1.0 across sessions
     survived: dict[int, int] = field(default_factory=dict)  # horizon days -> survived lines
     deleted: dict[int, bool] = field(default_factory=dict)  # horizon days -> file deleted at snapshot
     pending_horizons: list[int] = field(default_factory=list)
+
+    @property
+    def attributed_added(self) -> float:
+        """Lines weighted by attribution share — contested commits split cleanly."""
+        return self.added * self.share
 
 
 @dataclass
@@ -95,6 +101,7 @@ def analyze_survival(
                 path=path,
                 kind=classify_path(path),
                 added=added,
+                share=pair.share,
             )
             for horizon in horizons:
                 target = commit.date + timedelta(days=horizon)
@@ -136,15 +143,17 @@ def _aggregate(
     measured_units = [u for u in units if headline_horizon in u.survived]
     pending_units = [u for u in units if headline_horizon in u.pending_horizons]
 
-    total_added = sum(u.added for u in measured_units)
-    total_survived = sum(u.survived[headline_horizon] for u in measured_units)
+    # All aggregates are attribution-share weighted so a commit contested by
+    # two sessions contributes each unit's share exactly once overall.
+    total_added = sum(u.attributed_added for u in measured_units)
+    total_survived = sum(u.survived[headline_horizon] * u.share for u in measured_units)
     overall = (total_survived / total_added) if total_added else None
 
     by_kind: dict[str, dict] = {}
     for kind in KINDS:
         kind_units = [u for u in measured_units if u.kind == kind]
-        added = sum(u.added for u in kind_units)
-        survived = sum(u.survived[headline_horizon] for u in kind_units)
+        added = sum(u.attributed_added for u in kind_units)
+        survived = sum(u.survived[headline_horizon] * u.share for u in kind_units)
         by_kind[kind] = {
             "added": added,
             "survived": survived,
@@ -155,8 +164,8 @@ def _aggregate(
     sessions: dict[str, dict] = {}
     for sid in session_ids:
         sid_units = [u for u in measured_units if u.session_id == sid]
-        added = sum(u.added for u in sid_units)
-        survived = sum(u.survived[headline_horizon] for u in sid_units)
+        added = sum(u.attributed_added for u in sid_units)
+        survived = sum(u.survived[headline_horizon] * u.share for u in sid_units)
         pending = sum(1 for u in units if u.session_id == sid and headline_horizon in u.pending_horizons)
         sessions[sid] = {
             "added": added,
@@ -172,8 +181,8 @@ def _aggregate(
         if horizon == headline_horizon:
             continue
         h_units = [u for u in units if horizon in u.survived]
-        h_added = sum(u.added for u in h_units)
-        h_survived = sum(u.survived[horizon] for u in h_units)
+        h_added = sum(u.attributed_added for u in h_units)
+        h_survived = sum(u.survived[horizon] * u.share for u in h_units)
         secondary[horizon] = (h_survived / h_added) if h_added else None
 
     return SurvivalResult(

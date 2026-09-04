@@ -51,12 +51,22 @@ def is_git_repo(repo: str) -> bool:
         return False
 
 
+def _has_commits(repo: str) -> bool:
+    try:
+        _run(repo, ["rev-parse", "--verify", "--quiet", "HEAD"])
+        return True
+    except GitError:
+        return False
+
+
 def commits_with_numstat(repo: str, since: datetime | None, until: datetime | None) -> list[CommitInfo]:
     """Commits in [since, until] with per-file added-line counts.
 
     Merge commits naturally contribute no numstat rows and therefore zero added
     lines; parent/first-parent semantics do not matter for added-line accounting.
     """
+    if not _has_commits(repo):
+        return []
     fmt = "@@@%H%x1f%aI%x1f%s"
     args = ["log", f"--pretty=format:{fmt}", "--numstat", "--no-renames"]
     if since is not None:

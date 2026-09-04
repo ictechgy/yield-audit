@@ -14,9 +14,10 @@ measurement-only.
   malformed records skipped).
 - M1 output survival rate with git-blame snapshots at configurable horizons
   (default 7d headline, 7/30 measured), split by output kind
-  (source/test/docs/config); pending-horizon units reported separately.
+  (source/test/docs/config); pending-horizon units reported separately;
+  aggregates weighted by attribution share so contested commits count once.
 - M2 waste cost bounds (removed = lower+upper, >=50% lost = upper only);
-  line-share proxy labeled as such.
+  attribution-share-weighted line-share proxy labeled as such.
 - M3 retry tax: failure chains from repeated normalized Bash commands with
   errors; interval-based token attribution.
 - M4 accepted-task accounting: cost/tokens per accepted session
@@ -30,6 +31,8 @@ measurement-only.
   fallback for unknown models) with JSON override file.
 - Report formats: console, JSON (`yieldaudit.report.v1`, every block
   labeled observed/estimate/proxy), markdown; path redaction by default.
+- Graceful degradation on repositories with no commits yet (empty report,
+  no crash).
 - CLI: `yield-audit audit`, `yield-audit doctor`; `--now` for reproducible
   runs.
 - Tests: deterministic fixture git repository (pinned dates) + synthetic

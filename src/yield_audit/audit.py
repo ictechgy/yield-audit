@@ -210,7 +210,7 @@ def _waste_block(waste) -> dict:
         "measurement": "estimate_with_bounds",
         "total_lower_usd": round(total_lower, 6),
         "total_upper_usd": round(total_upper, 6),
-        "method": "session cost x line-share proxy x waste class (removed=lower+upper, rewritten>=50% lost=upper only)",
+        "method": "session cost x attribution-share-weighted line-share proxy x waste class (removed=lower+upper, rewritten>=50% lost=upper only)",
         "per_session": {
             _sid(sid): {
                 "lower_usd": round(b.lower_usd, 6),

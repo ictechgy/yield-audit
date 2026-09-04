@@ -31,9 +31,9 @@ REWRITE_THRESHOLD = 0.5
 class WasteBound:
     lower_usd: float
     upper_usd: float
-    removed_lines: int
-    rewritten_lines: int
-    edited_lines: int
+    removed_lines: float  # attribution-share weighted
+    rewritten_lines: float
+    edited_lines: float
     units_by_class: dict[str, int]
 
 
@@ -54,8 +54,13 @@ def analyze_waste(
     session_costs: dict[str, float],
     horizon: int,
 ) -> dict[str, WasteBound]:
-    """Session-id -> bounds. Only sessions with measured output are included."""
-    measured_added: dict[str, int] = {}
+    """Session-id -> bounds. Only sessions with measured output are included.
+
+    Line counts are attribution-share weighted (``attributed_added``), so a
+    commit contested by two sessions contributes to each session's bounds in
+    proportion to its share.
+    """
+    measured_added: dict[str, float] = {}
     for session_id, info in survival.sessions.items():
         if info["added"] > 0:
             measured_added[session_id] = info["added"]
@@ -65,7 +70,7 @@ def analyze_waste(
         total_added = measured_added[session_id]
         cost = session_costs.get(session_id, 0.0)
         lower = upper = 0.0
-        removed = rewritten = edited = 0
+        removed = rewritten = edited = 0.0
         class_counts = {REMOVED: 0, REWRITTEN: 0, EDITED: 0}
         for unit in survival.units:
             if unit.session_id != session_id:
@@ -74,16 +79,17 @@ def analyze_waste(
             if cls is None:
                 continue
             class_counts[cls] += 1
-            share = cost * (unit.added / total_added) if total_added else 0.0
+            effective = unit.attributed_added
+            share = cost * (effective / total_added) if total_added else 0.0
             if cls == REMOVED:
-                removed += unit.added
+                removed += effective
                 lower += share
                 upper += share
             elif cls == REWRITTEN:
-                rewritten += unit.added
+                rewritten += effective
                 upper += share
             else:
-                edited += unit.added
+                edited += effective
         out[session_id] = WasteBound(
             lower_usd=lower,
             upper_usd=upper,

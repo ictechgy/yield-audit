@@ -128,6 +128,21 @@ def test_classify_path_kinds():
     assert classify_path("package-lock.json") == "config"
 
 
+def test_survival_aggregate_weights_contested_commits_by_share():
+    from yield_audit.lenses.survival import _aggregate
+
+    # u1 fully owned (share 1.0, 10/10 survived); u2 contested at half share (0/10).
+    # Weighted: (10 + 0) / (10 + 5) = 0.667 — unweighted would be 10/20 = 0.5.
+    units = [
+        SurvivalUnit("s1", "c", "a.py", "source", added=10, share=1.0, survived={7: 10}, deleted={7: False}),
+        SurvivalUnit("s2", "c", "a.py", "source", added=10, share=0.5, survived={7: 0}, deleted={7: False}),
+    ]
+    result = _aggregate(units, horizons=(7,), headline_horizon=7, notes=[])
+    assert result.overall == pytest.approx(10 / 15)
+    assert result.sessions["s1"]["added"] == pytest.approx(10)
+    assert result.sessions["s2"]["added"] == pytest.approx(5)
+
+
 def test_survival_unit_classification_thresholds():
     unit_removed = SurvivalUnit("s", "c", "a.py", "source", added=10, survived={7: 0}, deleted={7: True})
     from yield_audit.lenses.waste import EDITED, REMOVED, REWRITTEN, classify_unit

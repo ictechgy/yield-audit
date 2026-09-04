@@ -9,8 +9,12 @@
 ## 빠른 시작
 
 ```bash
+# 설치 (PyPI 게시 전: 저장소에서 직접)
+git clone <this repo> && cd yield-audit
+python3 -m pip install .            # or: uv pip install .
+
 # 저장소 결과 보기 (트랜스크립트 기본 경로: ~/.claude/projects)
-uvx yield-audit audit --repo /path/to/your/repo
+yield-audit audit --repo /path/to/your/repo
 
 # JSON / 마크다운 리포트
 yield-audit audit --repo . --format json --details
