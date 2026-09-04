@@ -1,0 +1,366 @@
+"""Audit pipeline: normalize inputs, run lenses, assemble the report dict.
+
+Every metric block carries a ``measurement`` label so no reader can mistake
+an estimate for an observation:
+
+- ``observed``  — read straight from local records (token counts, commands).
+- ``estimate``  — observed values × list-price assumptions (USD figures).
+- ``proxy``     — a stated substitute stands in for an unobservable quantity
+                  (e.g. line-share standing in for per-commit token share).
+"""
+
+from __future__ import annotations
+
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+
+from . import gitdata, transcripts
+from .attribute import attribute as attribute_fn
+from .costs import session_cost
+from .lenses.accepted import analyze_accepted
+from .lenses.cache_locality import analyze_cache_locality
+from .lenses.retry import analyze_retry
+from .lenses.survival import analyze_survival
+from .lenses.verify_gap import analyze_verify_gap
+from .lenses.waste import analyze_waste
+from .pricing import load_pricing
+
+SCHEMA_VERSION = "yieldaudit.report.v1"
+
+
+class AuditError(RuntimeError):
+    """User-facing configuration/environment problem."""
+
+
+def run_audit(
+    *,
+    repo: str,
+    transcripts_root: Path,
+    days: int,
+    horizons: tuple[int, ...],
+    headline_horizon: int,
+    now: datetime,
+    pricing_override: str | None,
+    proximity_hours: int,
+    show_paths: bool,
+    details: bool,
+    log=None,
+) -> dict:
+    if not gitdata.is_git_repo(repo):
+        raise AuditError(f"not a git repository: {repo}")
+    if headline_horizon not in horizons:
+        horizons = (headline_horizon, *horizons)
+
+    repo_real = transcripts.normalize_path(repo)
+    sessions = transcripts.load_sessions(
+        repo_real, transcripts_root, now=now, days=days, logger=log
+    )
+    transcripts.group_edit_files_by_repo(sessions, repo_real)
+
+    since = now - timedelta(days=days) if days and days > 0 else None
+    commits = gitdata.commits_with_numstat(repo_real, since=since, until=None)
+    commits_by_sha = {c.sha: c for c in commits}
+
+    attributions = attribute_fn(
+        sessions,
+        commits,
+        proximity=timedelta(hours=proximity_hours),
+    )
+
+    table, fallback, pricing_notes = load_pricing(pricing_override)
+
+    session_costs = {}
+    cost_objects = {}
+    for session in sessions:
+        cost = session_cost(session, table, fallback)
+        cost_objects[session.session_id] = cost
+        session_costs[session.session_id] = {
+            "cost_usd": cost.cost_usd,
+            "total_tokens": cost.total_input_tokens + cost.output_tokens,
+        }
+
+    survival = analyze_survival(
+        repo_real,
+        attributions,
+        commits_by_sha,
+        now=now,
+        horizons=horizons,
+        headline_horizon=headline_horizon,
+    )
+    waste = analyze_waste(survival, {sid: c["cost_usd"] for sid, c in session_costs.items()}, headline_horizon)
+
+    commit_dates: dict[str, datetime] = {}
+    committed_ids: set[str] = set()
+    for pair in attributions.pairs:
+        committed_ids.add(pair.session_id)
+        commit = commits_by_sha.get(pair.commit_sha)
+        if commit is not None:
+            prev = commit_dates.get(pair.session_id)
+            commit_dates[pair.session_id] = max(prev, commit.date) if prev else commit.date
+
+    survival_rates = {
+        sid: info["rate"] if info["added"] > 0 else None
+        for sid, info in survival.sessions.items()
+    }
+    verify = analyze_verify_gap(sessions, commit_dates, survival_rates)
+    accepted = analyze_accepted(session_costs, survival.sessions, committed_ids)
+
+    retry_by_session = {s.session_id: analyze_retry(s) for s in sessions}
+    cache_by_session = {
+        s.session_id: analyze_cache_locality(s, table, fallback) for s in sessions
+    }
+
+    unknown_models: set[str] = set()
+    for cost in cost_objects.values():
+        unknown_models |= cost.unknown_models
+
+    report = {
+        "schema_version": SCHEMA_VERSION,
+        "generated_at": now.astimezone(timezone.utc).isoformat(),
+        "parameters": {
+            "repo": repo_real,
+            "window_days": days,
+            "horizons_days": list(horizons),
+            "headline_horizon_days": headline_horizon,
+            "transcripts_root": str(transcripts_root),
+            "attribution_proximity_hours": proximity_hours,
+            "pricing_source": "builtin_2026-09" if not pricing_override else str(pricing_override),
+        },
+        "input": {
+            "sessions": len(sessions),
+            "api_calls": sum(len(s.api_calls) for s in sessions),
+            "commits_in_window": len(commits),
+            "attributed_commits": len(attributions.claimed_shas),
+            "unclaimed_commits": len(attributions.unclaimed_commits),
+            "ambiguous_commits": attributions.ambiguous_commits,
+            "unknown_models": sorted(unknown_models),
+        },
+        "attribution": _attribution_block(attributions),
+        "m1_survival": _survival_block(survival, show_paths, details),
+        "m2_waste": _waste_block(waste),
+        "m3_retry": _retry_block(retry_by_session),
+        "m4_accepted": _accepted_block(accepted),
+        "m5_cache": _cache_block(cache_by_session),
+        "m8_verify": _verify_block(verify),
+        "notes": _global_notes(pricing_notes),
+    }
+    return report
+
+
+def _attribution_block(attributions) -> dict:
+    grades: dict[str, int] = {}
+    for pair in attributions.pairs:
+        grades[pair.grade] = grades.get(pair.grade, 0) + 1
+    return {
+        "measurement": "heuristic_matching_with_confidence_grades",
+        "pairs": len(attributions.pairs),
+        "grades": grades,
+        "ambiguous_commits": attributions.ambiguous_commits,
+        "note": "high = session ran the commit itself; medium = shared edited files within the time window; contested commits are split and flagged",
+    }
+
+
+def _survival_block(survival, show_paths: bool, details: bool) -> dict:
+    block = {
+        "measurement": "measured_from_git_history",
+        "horizon_days": survival.horizon,
+        "overall_rate": _round(survival.overall),
+        "added_lines": survival.overall_added,
+        "survived_lines": survival.overall_survived,
+        "pending_units": survival.pending_count,
+        "by_kind": {
+            kind: {
+                "added": info["added"],
+                "survived": info["survived"],
+                "rate": _round(info["rate"]),
+            }
+            for kind, info in survival.by_kind.items()
+        },
+        "per_session": {
+            _sid(sid): {
+                "added": info["added"],
+                "survived": info["survived"],
+                "rate": _round(info["rate"]),
+                "pending": info["pending"],
+            }
+            for sid, info in sorted(survival.sessions.items())
+        },
+        "notes": survival.notes,
+    }
+    if details:
+        block["units"] = [
+            {
+                "session": _sid(u.session_id),
+                "path": _path(u.path, show_paths),
+                "kind": u.kind,
+                "added": u.added,
+                "survived": u.survived.get(survival.horizon),
+                "deleted": u.deleted.get(survival.horizon),
+                "pending": survival.horizon in u.pending_horizons,
+            }
+            for u in survival.units
+        ]
+    return block
+
+
+def _waste_block(waste) -> dict:
+    total_lower = sum(b.lower_usd for b in waste.values())
+    total_upper = sum(b.upper_usd for b in waste.values())
+    block = {
+        "measurement": "estimate_with_bounds",
+        "total_lower_usd": round(total_lower, 6),
+        "total_upper_usd": round(total_upper, 6),
+        "method": "session cost x line-share proxy x waste class (removed=lower+upper, rewritten>=50% lost=upper only)",
+        "per_session": {
+            _sid(sid): {
+                "lower_usd": round(b.lower_usd, 6),
+                "upper_usd": round(b.upper_usd, 6),
+                "removed_lines": b.removed_lines,
+                "rewritten_lines": b.rewritten_lines,
+                "edited_lines": b.edited_lines,
+            }
+            for sid, b in sorted(waste.items())
+        },
+    }
+    return block
+
+
+def _retry_block(retry_by_session) -> dict:
+    total_tax_tokens = sum(r.tax_tokens for r in retry_by_session.values())
+    total_tokens = sum(r.total_tokens for r in retry_by_session.values())
+    chains = [
+        {
+            "session": _sid(sid),
+            "command": _truncate(c.command, 80),
+            "attempts": c.attempts,
+            "errors": c.errors,
+        }
+        for sid, r in sorted(retry_by_session.items())
+        for c in r.chains
+    ]
+    return {
+        "measurement": "observed_from_transcripts",
+        "total_tax_tokens": total_tax_tokens,
+        "total_tokens": total_tokens,
+        "tax_share": _round(total_tax_tokens / total_tokens) if total_tokens else None,
+        "failure_chains": chains,
+        "per_session": {
+            _sid(sid): {
+                "tax_tokens": r.tax_tokens,
+                "tax_share": _round(r.tax_token_share),
+                "chains": len(r.chains),
+            }
+            for sid, r in sorted(retry_by_session.items())
+            if r.chains
+        },
+    }
+
+
+def _accepted_block(accepted) -> dict:
+    return {
+        "measurement": "estimate_observed_tokens_x_list_price",
+        "cost_per_accepted_usd": _round(accepted.cost_per_accepted_usd, 6),
+        "tokens_per_accepted": accepted.tokens_per_accepted,
+        "accept_threshold_survival": 0.5,
+        "totals": {
+            status: {
+                "sessions": info["sessions"],
+                "cost_usd": _round(info["cost_usd"], 6),
+                "total_tokens": info["total_tokens"],
+            }
+            for status, info in accepted.totals.items()
+        },
+        "per_session": {
+            _sid(sid): {
+                "status": info["status"],
+                "cost_usd": _round(info["cost_usd"], 6),
+                "survival_rate": _round(info["survival_rate"]),
+            }
+            for sid, info in sorted(accepted.sessions.items())
+        },
+    }
+
+
+def _cache_block(cache_by_session) -> dict:
+    total_wasted = sum(r.wasted_usd for r in cache_by_session.values())
+    cold_total = sum(r.cold_calls for r in cache_by_session.values())
+    by_class: dict[str, int] = {}
+    for r in cache_by_session.values():
+        for cls, count in r.by_class.items():
+            by_class[cls] = by_class.get(cls, 0) + count
+    rates = [r.hit_rate for r in cache_by_session.values() if r.hit_rate is not None]
+    events = []
+    for sid, r in sorted(cache_by_session.items()):
+        for e in r.events:
+            if e.class_name == "compaction":
+                continue
+            events.append(
+                {
+                    "session": _sid(sid),
+                    "ts": e.ts.isoformat(),
+                    "class": e.class_name,
+                    "gap_seconds": round(e.gap_seconds) if e.gap_seconds is not None else None,
+                    "input_tokens": e.input_tokens,
+                    "wasted_usd": _round(e.wasted_usd, 6),
+                }
+            )
+    return {
+        "measurement": "estimate_observed_tokens_x_list_price",
+        "cold_calls": cold_total,
+        "cold_by_class": by_class,
+        "wasted_usd": _round(total_wasted, 6),
+        "mean_session_hit_rate": _round(sum(rates) / len(rates)) if rates else None,
+        "events": events[:200],
+        "events_truncated": max(0, len(events) - 200),
+        "notes": [
+            "wasted_usd = what non-compaction cold input would have cost at cache-read price; compaction rebuilds are excluded by design"
+        ],
+    }
+
+
+def _verify_block(verify) -> dict:
+    return {
+        "measurement": "observed_from_transcripts",
+        "gap_rate": _round(verify.gap_rate),
+        "per_session": {
+            _sid(sid): {
+                "status": info.status,
+                "verify_commands": info.verify_count,
+            }
+            for sid, info in sorted(verify.sessions.items())
+        },
+        "correlation_with_survival": {
+            status: {
+                "sessions": info["sessions"],
+                "mean_survival": _round(info["mean_survival"]),
+            }
+            for status, info in verify.correlation.items()
+        },
+        "notes": verify.notes,
+    }
+
+
+def _global_notes(pricing_notes: list[str]) -> list[str]:
+    return [
+        "all data stays local: transcripts and git history are read, nothing is uploaded",
+        "USD figures multiply observed token counts by list prices; your actual rates may differ (override with --pricing-file)",
+        "attribution is heuristic; every dependent metric inherits its confidence grades",
+    ] + pricing_notes
+
+
+def _round(value, digits: int = 6):
+    return round(value, digits) if isinstance(value, float) else value
+
+
+def _sid(session_id: str) -> str:
+    return session_id[:8]
+
+
+def _truncate(text: str, limit: int) -> str:
+    return text if len(text) <= limit else text[: limit - 1] + "…"
+
+
+def _path(path: str, show_paths: bool) -> str:
+    if show_paths:
+        return path
+    return path.rsplit("/", 1)[-1]
