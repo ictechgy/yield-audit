@@ -170,7 +170,10 @@ def test_munged_directory_prefilter_and_fallback(tmp_path):
     repo.mkdir()
     repo_cwd = str(repo.resolve())
     root = tmp_path / "projects"
-    munged = root / repo_cwd.replace("/", "-")
+    # the production munging (separators AND the drive colon) — a plain
+    # replace("/", "-) is a no-op on Windows paths and the join would
+    # collapse onto the repo dir itself
+    munged = root / transcripts.munged_project_dir_name(repo_cwd)
     munged.mkdir(parents=True)
     other = root / "-somewhere-else"
     other.mkdir()
