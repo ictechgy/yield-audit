@@ -16,6 +16,8 @@ venv/
 .ruff_cache/
 .coverage
 htmlcov/
+# library: lockfile stays local (CI installs via pip)
+uv.lock
 
 # yield-audit local cache
 .yield/

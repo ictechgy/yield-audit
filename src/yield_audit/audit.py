@@ -14,12 +14,13 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from . import gitdata, redact, transcripts
+from . import cohorts, gitdata, redact, transcripts
 from .attribute import attribute as attribute_fn
 from .costs import session_cost
 from .lenses.accepted import analyze_accepted
 from .lenses.cache_locality import analyze_cache_locality
 from .lenses.retry import analyze_retry
+from .lenses.rework import analyze_rework
 from .lenses.survival import analyze_survival
 from .lenses.verify_gap import analyze_verify_gap
 from .lenses.waste import analyze_waste
@@ -35,7 +36,7 @@ class AuditError(RuntimeError):
 def run_audit(
     *,
     repo: str,
-    transcripts_root: Path,
+    transcripts_root: Path | None,
     days: int,
     horizons: tuple[int, ...],
     headline_horizon: int,
@@ -44,6 +45,8 @@ def run_audit(
     proximity_hours: int,
     show_paths: bool,
     details: bool,
+    agents=None,
+    rework_days: int = 14,
     log=None,
 ) -> dict:
     if not gitdata.is_git_repo(repo):
@@ -53,14 +56,17 @@ def run_audit(
 
     repo_real = transcripts.normalize_path(repo)
     log_messages: list[str] = []
+    roots = transcripts.resolve_roots(agents or transcripts.DEFAULT_AGENTS, transcripts_root)
+    for name in sorted(set(transcripts.DEFAULT_AGENTS) - set(roots)):
+        log_messages.append(f"agent {name}: transcripts root not found, skipped")
     if log is not None:
         sessions = transcripts.load_sessions(
-            repo_real, transcripts_root, now=now, days=days,
+            repo_real, transcripts_root, now=now, days=days, agents=agents,
             logger=lambda m: (log_messages.append(m), log(m))[1],
         )
     else:
         sessions = transcripts.load_sessions(
-            repo_real, transcripts_root, now=now, days=days,
+            repo_real, transcripts_root, now=now, days=days, agents=agents,
             logger=log_messages.append,
         )
     transcripts.group_edit_files_by_repo(sessions, repo_real)
@@ -76,6 +82,9 @@ def run_audit(
         proximity=timedelta(hours=proximity_hours),
     )
 
+    messages = gitdata.commit_messages(repo_real, since=since, until=None)
+    cohort_labels = cohorts.label_commits(messages, attributions.claimed_shas)
+
     table, fallback, pricing_notes = load_pricing(pricing_override)
 
     session_costs = {}
@@ -88,6 +97,9 @@ def run_audit(
             "total_tokens": cost.total_input_tokens + cost.output_tokens,
         }
 
+    # One shared blame/snapshot cache across lenses: M1 and M11 blame the
+    # same files at often-identical snapshot refs.
+    blame_cache: dict = {}
     survival = analyze_survival(
         repo_real,
         attributions,
@@ -95,6 +107,7 @@ def run_audit(
         now=now,
         horizons=horizons,
         headline_horizon=headline_horizon,
+        blame_cache=blame_cache,
     )
     waste = analyze_waste(survival, {sid: c["cost_usd"] for sid, c in session_costs.items()}, headline_horizon)
 
@@ -119,6 +132,15 @@ def run_audit(
         s.session_id: analyze_cache_locality(s, table, fallback) for s in sessions
     }
 
+    rework = analyze_rework(
+        repo_real,
+        commits,
+        cohort_labels,
+        now=now,
+        horizon_days=rework_days,
+        blame_cache=blame_cache,
+    )
+
     unknown_models: set[str] = set()
     for cost in cost_objects.values():
         unknown_models |= cost.unknown_models
@@ -131,8 +153,13 @@ def run_audit(
             "window_days": days,
             "horizons_days": list(horizons),
             "headline_horizon_days": headline_horizon,
-            "transcripts_root": redact.abbreviate_home(str(transcripts_root)),
+            "agents_scanned": sorted(roots),
+            "transcripts_root": redact.abbreviate_home(str(roots[sorted(roots)[0]])) if roots else "",
+            "transcripts_roots": {
+                name: redact.abbreviate_home(str(root)) for name, root in sorted(roots.items())
+            },
             "attribution_proximity_hours": proximity_hours,
+            "rework_horizon_days": rework_days,
             "pricing_source": "builtin_2026-09" if not pricing_override else str(pricing_override),
         },
         "input": {
@@ -151,6 +178,7 @@ def run_audit(
         "m4_accepted": _accepted_block(accepted),
         "m5_cache": _cache_block(cache_by_session),
         "m8_verify": _verify_block(verify),
+        "m11_rework": _rework_block(rework, details),
         "notes": _global_notes(pricing_notes) + git_warnings + log_messages[:20],
     }
     # Defense in depth: nothing in the report bypasses the output boundary,
@@ -330,6 +358,30 @@ def _cache_block(cache_by_session) -> dict:
     }
 
 
+def _rework_block(rework, details: bool) -> dict:
+    block = {
+        "measurement": "measured_from_git_history",
+        "rework_horizon_days": rework.horizon_days,
+        "cohort_evidence": dict(sorted(rework.evidence.items())),
+        "cohorts": {
+            label: {
+                "commits": info["commits"],
+                "measured_commits": info["measured_commits"],
+                "pending_commits": info["pending_commits"],
+                "added_lines": _num(info["added"]),
+                "reworked_lines": _num(info["reworked"]),
+                "rework_rate": _round(info["rate"]),
+            }
+            for label, info in sorted(rework.cohorts.items())
+        },
+        "notes": rework.notes,
+    }
+    if details:
+        block["commits"] = rework.commits[:200]
+        block["commits_truncated"] = max(0, len(rework.commits) - 200)
+    return block
+
+
 def _verify_block(verify) -> dict:
     return {
         "measurement": "observed_from_transcripts",
@@ -375,4 +427,8 @@ def _num(value):
 def _sid(session_id: str) -> str:
     # Session ids are transcript-controlled; they end up as dict keys and
     # table cells, so they pass the same sanitization as everything else.
-    return redact.sanitize_text(session_id)[:8]
+    # Vendor namespaced ids ("claude:abcd…") keep their prefix so reports
+    # stay unambiguous in multi-agent audits.
+    safe = redact.sanitize_text(session_id)
+    vendor, sep, rest = safe.partition(":")
+    return f"{vendor}:{rest[:8]}" if sep else safe[:8]

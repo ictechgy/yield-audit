@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "yield-audit"
-version = "0.1.2"
+version = "0.3.0"
 description = "Outcome accounting for AI coding agents: measure what survived, what it cost, and what was wasted — fully local."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -29,8 +29,8 @@ classifiers = [
 # Runtime dependencies: none. git must be installed and on PATH.
 
 [project.urls]
-Homepage = "https://github.com/yield-audit/yield-audit"
-Changelog = "https://github.com/yield-audit/yield-audit/blob/main/CHANGELOG.md"
+Homepage = "https://github.com/ictechgy/yield-audit"
+Changelog = "https://github.com/ictechgy/yield-audit/blob/main/CHANGELOG.md"
 
 [project.scripts]
 yield-audit = "yield_audit.cli:main"

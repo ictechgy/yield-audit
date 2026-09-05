@@ -10,6 +10,8 @@
   C1(2026-08-01, 세션 A의 산출: app.py 10줄·notes.md 4줄·config.yaml 4줄·test_core.py 6줄),
   C2(2026-08-04, 미귀속 후속 커밋: app.py 절반 재작성·test_app.py 추가·notes.md 삭제·config.yaml 2줄 재작성).
 - **`build_transcripts()`** — 실제 Claude Code JSONL 스키마(키 이름)를 모사한 합성 트랜스크립트.
+- **`build_codex_transcripts()`** — codex-rs rollout JSONL 스키마를 모사한 합성 트랜스크립트
+  (codex/멀티 에이전트 테스트용). 세션 id는 어댑터에서 "vendor:<raw>"로 네임스페이스됨.
   세션 A=커밋+검증+콜드콜, B=재시도 사슬, C=컴팩션 직후 콜드 — 7개 렌즈 전부가 이 3개에서 exercised된다.
 - 감사 기준 시각은 `--now 2026-08-20T00:00:00Z`(conftest의 `NOW`).
 

@@ -20,6 +20,11 @@ from conftest import NOW, SESSION_A, SESSION_B
 from yield_audit.cli import main
 
 
+def sid(raw: str) -> str:
+    # report keys carry the vendor namespace since the adapter refactor
+    return f"claude:{raw[:8]}"
+
+
 def audit_argv(fixture_env, *extra) -> list[str]:
     return [
         "audit",
@@ -43,9 +48,9 @@ def report(fixture_env, capsys) -> dict:
 def test_report_schema(report):
     assert report["schema_version"] == "yieldaudit.report.v1"
     assert report["input"]["sessions"] == 3
-    assert report["input"]["commits_in_window"] == 2
+    assert report["input"]["commits_in_window"] == 4
     assert report["input"]["attributed_commits"] == 1
-    assert report["input"]["unclaimed_commits"] == 1
+    assert report["input"]["unclaimed_commits"] == 3
 
 
 def test_attribution_grades(report):
@@ -63,7 +68,7 @@ def test_m1_survival_golden(report):
     assert kinds["test"]["rate"] == pytest.approx(1.0)
     assert kinds["docs"]["rate"] == 0.0
     assert kinds["config"]["rate"] == pytest.approx(0.5)
-    per_session = m1["per_session"][SESSION_A[:8]]
+    per_session = m1["per_session"][sid(SESSION_A)]
     assert per_session["rate"] == pytest.approx(13 / 24)
     assert per_session["pending"] == 0
     # per-unit details: notes.md was deleted before the 7d snapshot
@@ -78,7 +83,7 @@ def test_m1_survival_golden(report):
 
 def test_m2_waste_bounds_golden(report):
     m2 = report["m2_waste"]
-    session_block = m2["per_session"][SESSION_A[:8]]
+    session_block = m2["per_session"][sid(SESSION_A)]
     session_cost = 0.00643
     assert session_block["lower_usd"] == pytest.approx(session_cost * (4 / 24), abs=1e-6)
     assert session_block["upper_usd"] == pytest.approx(session_cost * (18 / 24), abs=1e-6)
@@ -100,7 +105,7 @@ def test_m3_retry_tax_golden(report):
     assert chain["errors"] == 2
     assert chain["command"] == "npm test"
     # within session B alone the tax is half of everything
-    assert m3["per_session"][SESSION_B[:8]]["tax_share"] == pytest.approx(0.5)
+    assert m3["per_session"][sid(SESSION_B)]["tax_share"] == pytest.approx(0.5)
 
 
 def test_m4_accepted_golden(report):
@@ -109,8 +114,8 @@ def test_m4_accepted_golden(report):
     assert m4["totals"]["no_output"]["sessions"] == 2
     assert m4["totals"]["rejected"]["sessions"] == 0
     assert m4["cost_per_accepted_usd"] == pytest.approx(0.00643, abs=1e-6)
-    assert m4["per_session"][SESSION_A[:8]]["status"] == "accepted"
-    assert m4["per_session"][SESSION_A[:8]]["survival_rate"] == pytest.approx(13 / 24)
+    assert m4["per_session"][sid(SESSION_A)]["status"] == "accepted"
+    assert m4["per_session"][sid(SESSION_A)]["survival_rate"] == pytest.approx(13 / 24)
 
 
 def test_m5_cache_locality_golden(report):
@@ -131,6 +136,34 @@ def test_m8_verify_gap_golden(report):
     assert m8["gap_rate_strict"] == 0.0
     correlation = m8["correlation_with_survival"]
     assert correlation["verified_before_commit"]["mean_survival"] == pytest.approx(13 / 24, abs=1e-3)
+
+
+def test_m11_rework_golden(report):
+    m11 = report["m11_rework"]
+    assert m11["measurement"] == "measured_from_git_history"
+    assert m11["rework_horizon_days"] == 14
+    # evidence grades ship with every percentage (판정 아님 원칙)
+    assert m11["cohort_evidence"] == {"certain": 1, "probable": 1, "human": 2}
+    cohorts = m11["cohorts"]
+    assert cohorts["certain"]["reworked_lines"] == 6
+    assert cohorts["certain"]["rework_rate"] == pytest.approx(0.6)
+    assert cohorts["probable"]["reworked_lines"] == 11
+    assert cohorts["probable"]["rework_rate"] == pytest.approx(11 / 24)
+    assert cohorts["human"]["reworked_lines"] == 0
+    assert cohorts["human"]["pending_commits"] == 1
+    assert cohorts["ai_combined"]["rework_rate"] == pytest.approx(0.5)
+    # per-commit detail rows exist under --details and carry evidence strings
+    rows = {row["label"]: row for row in m11["commits"]}
+    assert rows["certain"]["evidence"] == "footer:claude"
+    assert rows["probable"]["evidence"] == "session_join:time_window+files"
+
+
+def test_rework_days_flag_disables_m11(fixture_env, capsys):
+    code = main([*audit_argv(fixture_env), "--format", "json", "--rework-days", "0"])
+    assert code == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data["parameters"]["rework_horizon_days"] == 0
+    assert data["m11_rework"]["cohorts"] == {}
 
 
 def test_report_redacts_home_and_commands(report, fixture_env):

@@ -19,7 +19,7 @@ def test_load_fixture_sessions(fixture_env):
         now=parse_iso8601(fixture_env["now"]),
         days=30,
     )
-    assert [s.session_id[:1] for s in sessions] == ["a", "b", "c"]
+    assert [s.session_id.split(":")[1][:1] for s in sessions] == ["a", "b", "c"]
 
     session_a = sessions[0]
     assert len(session_a.api_calls) == 4
@@ -64,7 +64,7 @@ def test_time_window_filters_old_sessions(fixture_env):
         now=parse_iso8601(fixture_env["now"]),
         days=17,  # cutoff 08-03: session A (ended 08-01) drops, B and C (08-04) stay
     )
-    assert {s.session_id[:1] for s in sessions} == {"b", "c"}
+    assert {s.session_id.split(":")[1][:1] for s in sessions} == {"b", "c"}
 
 
 def test_defensive_parsing(tmp_path):
@@ -97,7 +97,7 @@ def test_defensive_parsing(tmp_path):
 
     sessions = transcripts.load_sessions(str(tmp_path), root, now=parse_iso8601("2026-08-02T00:00:00Z"), days=1)
     assert len(sessions) == 1
-    assert sessions[0].session_id == "sid-1"
+    assert sessions[0].session_id == "claude:sid-1"
 
 
 def test_relative_edited_files_drop_outside_paths(fixture_env):
@@ -190,7 +190,7 @@ def test_munged_directory_prefilter_and_fallback(tmp_path):
 
     # prefilter: munged dir exists -> its sessions are found without walking elsewhere
     sessions = transcripts.load_sessions(repo_cwd, root, now=parse_iso8601("2026-08-02T00:00:00Z"), days=1)
-    assert [s.session_id for s in sessions] == ["sid-right"]
+    assert [s.session_id for s in sessions] == ["claude:sid-right"]
 
     # fallback: root without a munged dir degrades to a full walk (finds nothing here)
     empty_root = tmp_path / "empty-projects"

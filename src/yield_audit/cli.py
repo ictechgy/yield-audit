@@ -36,7 +36,16 @@ def _build_parser() -> argparse.ArgumentParser:
         "--transcripts-dir",
         type=Path,
         default=None,
-        help=f"Claude Code transcripts root (default: {transcripts.default_transcripts_root()})",
+        help=(
+            "transcripts root override, applied to every selected agent "
+            f"(default: each agent's own root, e.g. {transcripts.default_transcripts_root()})"
+        ),
+    )
+    p_audit.add_argument(
+        "--agent",
+        default="auto",
+        help=f"which agent's transcripts to scan: auto ({', '.join(transcripts.DEFAULT_AGENTS)}), "
+        "or one vendor's name (default auto)",
     )
     p_audit.add_argument("--days", type=int, default=30, help="session/commit window in days (default 30, 0 = all)")
     p_audit.add_argument(
@@ -59,6 +68,12 @@ def _build_parser() -> argparse.ArgumentParser:
         help="session-commit time window for attribution (default 24)",
     )
     p_audit.add_argument(
+        "--rework-days",
+        type=int,
+        default=14,
+        help="rework horizon for the M11 cohort lens in days (default 14, 0 = skip)",
+    )
+    p_audit.add_argument(
         "--format",
         choices=("console", "json", "markdown"),
         default="console",
@@ -77,6 +92,7 @@ def _build_parser() -> argparse.ArgumentParser:
     p_doctor = sub.add_parser("doctor", help="check environment and session discovery")
     p_doctor.add_argument("--repo", default=None, help="optionally verify sessions exist for this repository")
     p_doctor.add_argument("--transcripts-dir", type=Path, default=None)
+    p_doctor.add_argument("--agent", default="auto", help="agent vendors to check (default auto)")
     return parser
 
 
@@ -111,13 +127,26 @@ def _resolve_now(raw: str | None) -> datetime:
     return parsed
 
 
+def _resolve_agents(raw: str) -> tuple[str, ...]:
+    if raw == "auto":
+        return transcripts.DEFAULT_AGENTS
+    if raw in transcripts.ADAPTERS:
+        return (raw,)
+    raise audit.AuditError(
+        f"unknown agent {raw!r}; known: auto, {', '.join(transcripts.DEFAULT_AGENTS)}"
+    )
+
+
 def _run_audit(args) -> int:
     if args.days < 0:
         raise audit.AuditError("--days must be >= 0 (0 disables the time window)")
+    if args.rework_days < 0:
+        raise audit.AuditError("--rework-days must be >= 0 (0 skips the M11 rework lens)")
     repo = Path(args.repo).expanduser().resolve()
-    transcripts_root = args.transcripts_dir or transcripts.default_transcripts_root()
+    transcripts_root = args.transcripts_dir  # None = each agent's own root
     horizons = _parse_horizons(args.horizons)
     now = _resolve_now(args.now)
+    agents = _resolve_agents(args.agent)
 
     report = audit.run_audit(
         repo=str(repo),
@@ -130,6 +159,8 @@ def _run_audit(args) -> int:
         proximity_hours=args.proximity_hours,
         show_paths=args.show_paths,
         details=args.details,
+        agents=agents,
+        rework_days=args.rework_days,
     )
 
     if args.out is not None:
@@ -169,22 +200,26 @@ def _run_doctor(args) -> int:
     git_ok = shutil.which("git") is not None
     checks.append((git_ok, f"git on PATH: {git_ok}"))
 
-    transcripts_root = args.transcripts_dir or transcripts.default_transcripts_root()
-    checks.append((transcripts_root.is_dir(), f"transcripts root exists: {transcripts_root}"))
+    agents = _resolve_agents(args.agent)
+    roots = transcripts.resolve_roots(agents, args.transcripts_dir)
+    for name in sorted(agents):
+        root = roots.get(name)
+        if root is None:
+            checks.append((False, f"agent {name}: transcripts root not found ({transcripts.ADAPTERS[name].default_root()})"))
+            continue
+        jsonls = list(root.rglob("*.jsonl"))
+        checks.append((bool(jsonls), f"agent {name}: transcripts root {root} ({len(jsonls)} jsonl files)"))
 
     total_sessions = 0
-    if transcripts_root.is_dir():
-        jsonls = list(transcripts_root.rglob("*.jsonl"))
-        checks.append((bool(jsonls), f"transcript files found: {len(jsonls)}"))
-        if args.repo:
-            repo = str(Path(args.repo).expanduser().resolve())
-            sessions = transcripts.load_sessions(
-                repo, transcripts_root, now=datetime.now(timezone.utc), days=0
-            )
-            total_sessions = len(sessions)
-            checks.append((total_sessions > 0, f"sessions with cwd == repo: {total_sessions}"))
-            if not gitdata.is_git_repo(repo):
-                checks.append((False, f"not a git repository: {repo}"))
+    if args.repo:
+        repo = str(Path(args.repo).expanduser().resolve())
+        sessions = transcripts.load_sessions(
+            repo, args.transcripts_dir, now=datetime.now(timezone.utc), days=0, agents=agents
+        )
+        total_sessions = len(sessions)
+        checks.append((total_sessions > 0, f"sessions with cwd == repo: {total_sessions}"))
+        if not gitdata.is_git_repo(repo):
+            checks.append((False, f"not a git repository: {repo}"))
 
     for ok, message in checks:
         print(("ok  " if ok else "FAIL") + "  " + message)

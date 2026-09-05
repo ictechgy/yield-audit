@@ -2,7 +2,7 @@
 
 > **English TL;DR** — `yield-audit` is a local, read-only CLI that crosses your AI coding agent's session transcripts with your git history and reports what *survived*: output survival rate, waste cost bounds, retry tax, cost per accepted task, cache locality, and verification gaps. Zero runtime dependencies (git + Python stdlib only). Nothing leaves your machine.
 
-**yield-audit**은 AI 코딩 에이전트(Claude Code)의 세션이 만들어낸 출력의 **운명**을 측정하는 완전 로컬 옵저버토리입니다. ccusage가 *청구서*를 보여준다면, yield-audit은 **그 토큰 중 얼마나 살아남은 코드에 쓰였는지**를 보여줍니다.
+**yield-audit**은 AI 코딩 에이전트의 세션이 만들어낸 출력의 **운명**을 측정하는 완전 로컬 옵저버토리입니다. ccusage가 *청구서*를 보여준다면, yield-audit은 **그 토큰 중 얼마나 살아남은 코드에 쓰였는지**를 보여줍니다.
 
 핵심 질문은 단순합니다: *에이전트가 쓴 코드 중 일주일 뒤에도 남아 있는 것은 몇 %인가? 그리고 죽은 코드에 돈을 얼마나 썼는가?*
 
@@ -12,8 +12,12 @@
 # 설치 (PyPI 게시 전: 이 저장소 루트에서 직접)
 python3 -m pip install .            # or: uv pip install .
 
-# 저장소 결과 보기 (트랜스크립트 기본 경로: ~/.claude/projects)
+# 저장소 결과 보기 (기본: 설치된 모든 에이전트 트랜스크립트를 자동 스캔 —
+#   Claude Code ~/.claude/projects, Codex CLI ~/.codex/sessions)
 yield-audit audit --repo /path/to/your/repo
+
+# 특정 에이전트만 보기
+yield-audit audit --repo . --agent codex
 
 # JSON / 마크다운 리포트
 yield-audit audit --repo . --format json --details
@@ -25,7 +29,7 @@ yield-audit doctor --repo /path/to/your/repo
 
 요구 사항: Python ≥ 3.10, git. 런타임 의존성 없음. 네트워크 호출 없음.
 
-## 측정 렌즈 (v0.1)
+## 측정 렌즈 (v0.1–v0.3)
 
 | 렌즈 | 질문 | 성격 |
 |---|---|---|
@@ -35,6 +39,7 @@ yield-audit doctor --repo /path/to/your/repo
 | **M4 채택 작업당 비용** | 생존율 ≥ 50%인 세션 1건당 완전부담 비용. accepted/rejected/pending/no_output 분류 | 추정(관측 토큰 × 공시요금) |
 | **M5 캐시 지역성** | TTL 만료·프리픽스 파손으로 정가를 치른 콜드 호출 수와, 캐시였다면 아꼈을 금액. 컴팩션 직후 재구축은 예외 분류 | 추정(관측 토큰 × 공시요금) |
 | **M8 검증 공백률** | 커밋 전 검증 명령이 없던 세션 비율(미검증율·엄격율 두 가지) + 검증 유무별 생존율 상관 | 트랜스크립트 관측 |
+| **M11 AI 리워크율** | AI 표지 커밋은 인간 커밋보다 rework horizon(기본 14일, `--rework-days`) 내 얼마나 더 재작성되나. 코호트 근거(certain=푸터/probable=세션 조인/human) 분포 동봉 — 판정 도구가 아닌 계량 도구 | git history 기반 측정 |
 
 ### 정직성 계약
 
@@ -63,8 +68,8 @@ yield-audit doctor --repo /path/to/your/repo
 
 ## 로드맵
 
-- **v0.2** — Codex·Gemini CLI 트랜스크립트 어댑터, M7 컨텍스트 사망율(읽고 안 쓴 컨텍스트 회계), M9 세션 간 반복 지식 비용(메모리·벡터 인덱스 투자 ROI 역산), M10 핸드오프 세금(서브에이전트 페이로드 측정)
-- **v0.3** — 배치 스케줄 조언(M5 확장), 개인 라우팅 힌트(옵트인 리플레이), M11 인간 수정 시간(실험)
+- ~~**v0.2**~~ — ✅ 출시: 벤더 어댑터 패키지(Claude Code + Codex CLI, `--agent`), 세션 id 네임스페이싱. Gemini는 스키마 확보 후 추가.
+- **v0.3** — ✅ M11 AI 리워크율 출시(코호트 certain/probable/human, `--rework-days`). 남은 항목: M12 정착률(blame 스냅샷), `aidd` 서브커맨드 통합 리포트(코호트 비교 표), 배치 스케줄 조언(M5 확장), 개인 라우팅 힌트(옵트인 리플레이), M13/M14(CI 데이터 의존)
 - **v1.x** — 개입 계층(재시도 조기 포기 훅, 결정적 오라클 라우팅) — 각자 증거 게이트 뒤에서
 
 ## 개발

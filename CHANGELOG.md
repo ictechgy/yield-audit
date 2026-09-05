@@ -4,6 +4,67 @@ All notable changes to yield-audit are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning is
 SemVer.
 
+## [0.3.0] - 2026-09-05
+
+M11 AI rework rate — the first ADD-transition lens (기획서-AIDD-전환계량.md
+v0.3.0 scope): compares how quickly AI-marked commits get reworked against
+human ones, measured locally from git history alone.
+
+### Added
+- `cohorts.py`: every commit lands in one evidence-graded cohort —
+  `certain` (AI footer in the commit message: `Co-Authored-By: …`,
+  `Generated with …`, 🤖), `probable` (no footer but claimed by a
+  transcript session via the usual attribution join), or `human`.
+  Labels state matching evidence, never authorship verdicts; every
+  cohort percentage ships with the evidence distribution.
+- `lenses/rework.py` (M11): rework = lines a commit added that are no
+  longer present verbatim at the snapshot `--rework-days` (default 14)
+  later — the complement of M1's blame survival, applied to every commit
+  and aggregated by cohort plus an `ai_combined` view. Pending horizons
+  are excluded from rates and counted honestly; `--rework-days 0`
+  disables the lens.
+- Report block `m11_rework` and `parameters.rework_horizon_days`
+  (schema v1, additive); console/markdown renderers gained an M11
+  section; `gitdata.commit_messages` streams full commit messages for
+  footer evidence.
+
+### Changed
+- Fixture repo grew commits C3 (AI-footered, new file) and C4 (human
+  rework of it); M1/attribution goldens are unchanged, window counts
+  updated (commits_in_window 4, unclaimed 3).
+
+## [0.2.0] - 2026-09-05
+
+Vendor-agnostic transcripts: the Claude-only ingest module became an
+adapter registry, and the Codex CLI is scanned alongside Claude Code by
+default. Claude-only audits keep identical measured values (regression:
+all v0.1.2 golden numbers unchanged).
+
+### Added
+- `transcripts/` package with a `TranscriptAdapter` base class (find
+  files + parse one JSON record into `events.Session`) and a registry;
+  adding a vendor is one subclass plus one registry entry.
+- Codex CLI adapter (`~/.codex/sessions` rollout JSONL): session meta /
+  turn context / function calls / token counts, with vendor tool names
+  normalized to the canonical set (shell execution becomes `Bash`,
+  `apply_patch` headers become edited files, exit_code becomes tool
+  errors). Compaction boundaries are not present in this format and stay
+  empty.
+- `--agent {auto,claude,codex}` on `audit` and `doctor` (default `auto`:
+  every registered vendor; missing roots are skipped). An explicit
+  `--transcripts-dir` applies to all selected vendors — adapters skip
+  records that are not their schema, so mixed directories are safe.
+- Session ids are namespaced per vendor (`"claude:<id>"`,
+  `"codex:<id>"`); report keys keep the prefix. Report `parameters` adds
+  `agents_scanned` and `transcripts_roots` (schema v1, additive).
+
+### Changed
+- `run_audit`'s `transcripts_root` accepts `None` (each agent's own
+  default root) and takes a new `agents` argument; `load_sessions`
+  likewise. Ingest internals moved from `transcripts.py` into
+  `transcripts/{base,claude,codex}.py` — the public helpers are
+  re-exported unchanged.
+
 ## [0.1.2] - 2026-09-05
 
 Second review round: close the sanitizer bypasses found in v0.1.1's new

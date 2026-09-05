@@ -30,5 +30,6 @@ dataclass를 반환하는 **순수 함수**. 리포트 JSON 조립은 `../audit.
 | `accepted.py` | M4 채택당 비용 | 상태 4종(accepted/rejected/pending/no_output) — 커밋 있으나 미측정은 pending |
 | `cache_locality.py` | M5 캐시 지역성 | 첫 콜은 정상 콜드; 경계 tie는 `<=`; compaction은 wasted에서 제외 |
 | `verify_gap.py` | M8 검증 공백 | gap_rate(미검증)와 gap_rate_strict(커밋 전 미검증) 두 가지 유지 |
+| `rework.py` | M11 AI 리워크율 (코호트 비교) | 라벨은 근거 등급(certain/probable/human)이지 판정 아님; rework = added − 생존(blame); ai_combined은 certain+probable 합 |
 
 새 렌즈 추가 시 이 표의 한 줄과 루트 AGENTS.md의 measurement 라벨을 함께 업데이트한다.

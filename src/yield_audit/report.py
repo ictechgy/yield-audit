@@ -79,6 +79,28 @@ def render_console(report: dict) -> str:
         add(f"  {status:24} mean survival {pct(info['mean_survival'])} over {info['sessions']} sessions")
     add("")
 
+    m11 = report["m11_rework"]
+    add("== M11 AI rework ==")
+    if m11["rework_horizon_days"] <= 0:
+        add("disabled (--rework-days 0)")
+    else:
+        add(f"reworked within {m11['rework_horizon_days']}d, by cohort (evidence-graded, not verdicts):")
+        for label in ("certain", "probable", "human"):
+            info = m11["cohorts"].get(label)
+            if info and info["commits"]:
+                add(
+                    f"  {label:8} {pct(info['rework_rate']):>7}  "
+                    f"({info['reworked_lines']}/{info['added_lines']} lines, {info['pending_commits']} pending)"
+                )
+        combined = m11["cohorts"].get("ai_combined")
+        human = m11["cohorts"].get("human")
+        if combined and combined["commits"] and human and human["commits"]:
+            add(
+                f"  AI combined {pct(combined['rework_rate'])} vs human {pct(human['rework_rate'])}"
+                f"  (evidence: {', '.join(f'{k}={v}' for k, v in m11['cohort_evidence'].items())})"
+            )
+    add("")
+
     add("-- notes --")
     for note in report["notes"]:
         add(f"  {note}")
@@ -177,6 +199,28 @@ def render_markdown(report: dict) -> str:
         add("|---|---|---|")
         for status, info in m8["correlation_with_survival"].items():
             add(f"| {status} | {info['sessions']} | {pct(info['mean_survival'])} |")
+    add("")
+
+    m11 = report["m11_rework"]
+    add("## M11 AI rework")
+    add("")
+    if m11["rework_horizon_days"] <= 0:
+        add("Disabled (`--rework-days 0`).")
+    else:
+        add(f"Reworked within {m11['rework_horizon_days']}d, by cohort (evidence-graded, not verdicts).")
+        add("")
+        add("| cohort | rework rate | lines | pending |")
+        add("|---|---|---|---|")
+        for label in ("certain", "probable", "human", "ai_combined"):
+            info = m11["cohorts"].get(label)
+            if info and info["commits"]:
+                add(
+                    f"| {label} | {pct(info['rework_rate'])} | "
+                    f"{info['reworked_lines']}/{info['added_lines']} | {info['pending_commits']} |"
+                )
+        add("")
+        evidence = ", ".join(f"{k}={v}" for k, v in m11["cohort_evidence"].items())
+        add(f"_Cohort evidence: {evidence}._")
     add("")
 
     add("## notes")

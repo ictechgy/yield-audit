@@ -161,6 +161,41 @@ def _parse_git_date(value: str) -> datetime:
     return parsed
 
 
+def commit_messages(repo: str, since: datetime | None, until: datetime | None) -> dict[str, str]:
+    """Full commit messages (subject + body) keyed by sha, for cohort evidence.
+
+    AI authorship footers (``Co-Authored-By: …``, ``🤖 Generated with …``)
+    live in the body, which the numstat stream never carries — hence this
+    second, message-only pass over the same window. Records are terminated
+    by ``\\x1e`` so multi-line bodies survive line-oriented transport; a
+    body containing a literal ``\\x1e`` would truncate its own record, a
+    documented limitation (it corrupts evidence for that one commit, never
+    the pipeline).
+    """
+    if not _has_commits(repo):
+        return {}
+    args = [
+        "-c", "core.quotePath=false",
+        "log", "--pretty=format:%H%x1f%B%x1e",
+    ]
+    if since is not None:
+        args.append(f"--since={since.isoformat()}")
+    if until is not None:
+        args.append(f"--until={until.isoformat()}")
+
+    out = _run(repo, args)
+    messages: dict[str, str] = {}
+    for record in out.split("\x1e"):
+        record = record.lstrip("\n")
+        if not record:
+            continue
+        sha, sep, body = record.partition("\x1f")
+        sha = sha.strip()
+        if sep and len(sha) >= 40 and set(sha) <= _HEX:
+            messages[sha] = body.strip("\n")
+    return messages
+
+
 def snapshot_ref(repo: str, target_date: datetime) -> str:
     """The commit that was HEAD at ``target_date`` (last commit <= date), else HEAD."""
     out = _run(repo, ["rev-list", "-1", f"--before={target_date.isoformat()}", "HEAD"]).strip()
