@@ -28,6 +28,38 @@ def test_fable_cache_read_is_discounted():
     assert table["claude-fable-5-1"].cache_read == 0.25
 
 
+def test_openai_models_priced_from_table_not_claude_fallback():
+    table, fallback, _ = load_pricing()
+    # Codex CLI sessions must not inherit the (claude-opus-tier) fallback
+    assert table["gpt-5.1-codex"].input == 1.25
+    assert table["gpt-5.1-codex"].cache_write == 0.0
+    assert price_for_model(table, fallback, "gpt-5.1-codex") is not fallback
+    assert price_for_model(table, fallback, "gpt-5.1-codex-max").input == 1.25
+    assert price_for_model(table, fallback, "gpt-5.3-codex-20260901").output == 14.0
+    assert price_for_model(table, fallback, "gpt-5.1").output == 10.0
+    assert table["gpt-5-mini"].input == 0.25
+
+
+def test_codex_session_cost_is_not_inflated():
+    table, fallback, _ = load_pricing()
+    session = _session_with(
+        [
+            ApiCall(
+                ts=datetime(2026, 8, 5, tzinfo=timezone.utc),
+                model="gpt-5.1-codex",
+                input_tokens=1_000_000,
+                output_tokens=100_000,
+                cache_read_tokens=1_000_000,
+                cache_write_tokens=0,
+            )
+        ]
+    )
+    cost = session_cost(session, table, fallback)
+    # 1M*1.25 + 0.1M*10 + 1M*0.125 = 1.25 + 1 + 0.125
+    assert cost.cost_usd == pytest.approx(2.375)
+    assert not cost.unknown_models
+
+
 def test_override_file_replaces_entries(tmp_path):
     override = tmp_path / "prices.json"
     override.write_text(

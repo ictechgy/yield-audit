@@ -4,6 +4,31 @@ All notable changes to yield-audit are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning is
 SemVer.
 
+## [0.3.1] - 2026-09-06
+
+Trust, first-run, and performance fixes from the v0.3.0 review.
+
+### Fixed
+- OpenAI models priced from the table instead of the conservative
+  claude-opus fallback: gpt-5.1 / gpt-5.1-codex (1.25/10/0.125),
+  gpt-5.3-codex (1.75/14/0.175), gpt-5-mini, o3, o4-mini (standard tier,
+  published list prices 2026-09; codex variants share the gpt-5.1 base —
+  no separate listing). Codex sessions' USD figures are no longer
+  inflated ~4x.
+- Empty-state UX: a missing `--transcripts-dir` or absent vendor roots
+  now fail (exit 2) with a `doctor` hint instead of producing a silent
+  empty report; zero matching sessions print a prominent warning line in
+  console/markdown while staying a valid exit-0 measurement.
+
+### Changed — performance
+- Blame prefilter: one `git log --name-only` pass builds a per-path
+  touch map (committer dates, matching snapshot selection). Paths no
+  commit touched inside a measurement window are decided without a
+  single `git blame` process — same values, provably. A merge commit
+  inside a window forces blaming (merge resolutions rewrite lines
+  invisibly to the pass). Shared by M1 and M11 via the blame cache;
+  smoke: 102-commit full-history M11 audit in 0.12s.
+
 ## [0.3.0] - 2026-09-05
 
 M11 AI rework rate — the first ADD-transition lens (기획서-AIDD-전환계량.md

@@ -27,7 +27,7 @@ from datetime import datetime, timedelta
 
 from ..cohorts import CERTAIN, COHORT_LABELS, HUMAN, PROBABLE
 from ..gitdata import CommitInfo, blame_sha_counts
-from .survival import _snapshot, _tree
+from .survival import _snapshot, _touches, _tree, _untouched_between
 
 AI_COMBINED = "ai_combined"
 REPORT_LABELS = (*COHORT_LABELS, AI_COMBINED)
@@ -54,6 +54,7 @@ def analyze_rework(
     now: datetime,
     horizon_days: int = 14,
     blame_cache: dict | None = None,
+    touch_since: datetime | None = None,
 ) -> ReworkResult:
     """Rework rate per cohort over ``horizon_days``.
 
@@ -71,6 +72,7 @@ def analyze_rework(
         return ReworkResult(horizon_days=horizon_days, evidence={}, cohorts={}, commits=[], notes=notes)
 
     cache = blame_cache if blame_cache is not None else {}
+    touches, merges = _touches(repo, cache, touch_since)
     cohorts: dict[str, dict] = {label: _empty_bucket() for label in REPORT_LABELS}
     evidence: dict[str, int] = {label: 0 for label in COHORT_LABELS}
     detail: list[dict] = []
@@ -96,6 +98,15 @@ def analyze_rework(
             target = commit.date + timedelta(days=horizon_days)
             if target > now:
                 pending = True
+            elif all(
+                _untouched_between(touches, merges, commit, path, target)
+                for path, added in commit.files.items()
+                if added > 0
+            ):
+                # No commit (and no merge) changed any of the commit's
+                # paths inside the window: nothing can have been reworked,
+                # provable without a single blame process.
+                pass
             else:
                 ref = _snapshot(repo, target, cache)
                 tree = _tree(repo, ref, cache)

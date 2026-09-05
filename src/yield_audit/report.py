@@ -23,6 +23,8 @@ def render_console(report: dict) -> str:
         f"input: {inp['sessions']} sessions, {inp['api_calls']} api calls, "
         f"{inp['commits_in_window']} commits ({inp['attributed_commits']} attributed, {inp['unclaimed_commits']} unclaimed)"
     )
+    if not inp["sessions"]:
+        add("! no agent sessions matched this repo in the window — run `yield-audit doctor --repo <repo>` to check transcript discovery")
     if inp["unknown_models"]:
         add(f"unknown models (conservatively priced): {', '.join(inp['unknown_models'])}")
     add("")
@@ -122,6 +124,8 @@ def render_markdown(report: dict) -> str:
         f"- input: {inp['sessions']} sessions, {inp['api_calls']} api calls, "
         f"{inp['commits_in_window']} commits ({inp['attributed_commits']} attributed)"
     )
+    if not inp["sessions"]:
+        add("- **no agent sessions matched this repo in the window — run `yield-audit doctor --repo <repo>` to check transcript discovery**")
     if inp["unknown_models"]:
         add(f"- unknown models (conservatively priced): {', '.join(inp['unknown_models'])}")
     add("")

@@ -196,6 +196,76 @@ def commit_messages(repo: str, since: datetime | None, until: datetime | None) -
     return messages
 
 
+def path_touch_log(
+    repo: str,
+    since: datetime | None,
+    until: datetime | None,
+) -> tuple[dict[str, list[tuple[datetime, str]]], list[datetime]]:
+    """One-pass touch map for the blame prefilter.
+
+    Returns ``(touches, merge_dates)`` where ``touches[path]`` lists
+    ``(committer_date, sha)`` of every commit that changed ``path`` in the
+    range, and ``merge_dates`` lists committer dates of merge commits
+    (which contribute no name rows — a merge inside a measurement window
+    forces the caller back to blaming, because merge resolutions can
+    rewrite lines invisibly to this pass).
+
+    Committer dates (``%cI``) are used, not author dates: the snapshot
+    selection (``rev-list --before``) orders by committer date, so the
+    prefilter must reason with the same clock.
+    """
+    if not _has_commits(repo):
+        return {}, []
+    args = [
+        "-c", "core.quotePath=false",
+        "log", "--pretty=format:@@@%H%x1f%cI%x1f%P", "--name-only", "--no-renames",
+    ]
+    if since is not None:
+        args.append(f"--since={since.isoformat()}")
+    if until is not None:
+        args.append(f"--until={until.isoformat()}")
+
+    try:
+        proc = subprocess.Popen(
+            ["git", "-C", repo, *args],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            env=_clean_env(),
+        )
+    except FileNotFoundError as exc:
+        raise GitError("git executable not found on PATH") from exc
+
+    touches: dict[str, list[tuple[datetime, str]]] = {}
+    merges: list[datetime] = []
+    sha = ""
+    date = None
+    assert proc.stdout is not None
+    with proc.stdout:
+        for line in proc.stdout:
+            line = line.rstrip("\n")
+            # real headers always carry the \x1f separators; a path that
+            # merely starts with "@@@" must stay a path
+            if line.startswith("@@@") and "\x1f" in line:
+                sha, _, rest = line[3:].partition("\x1f")
+                date_str, _, parents = rest.partition("\x1f")
+                date = None
+                try:
+                    date = _parse_git_date(date_str)
+                except GitError:
+                    sha = ""
+                    continue
+                if " " in parents.strip():  # two or more parents -> merge
+                    merges.append(date)
+            elif line and date is not None and sha:
+                touches.setdefault(line, []).append((date, sha))
+    if proc.wait() != 0:
+        raise GitError(f"git log --name-only failed with exit code {proc.returncode}")
+    return touches, merges
+
+
 def snapshot_ref(repo: str, target_date: datetime) -> str:
     """The commit that was HEAD at ``target_date`` (last commit <= date), else HEAD."""
     out = _run(repo, ["rev-list", "-1", f"--before={target_date.isoformat()}", "HEAD"]).strip()

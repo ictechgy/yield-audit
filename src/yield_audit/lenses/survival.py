@@ -83,10 +83,12 @@ def analyze_survival(
     horizons: tuple[int, ...] = (7, 30),
     headline_horizon: int = 7,
     blame_cache: dict | None = None,
+    touch_since: datetime | None = None,
 ) -> SurvivalResult:
     cache = blame_cache if blame_cache is not None else {}
     notes: list[str] = []
     units: list[SurvivalUnit] = []
+    touches, merges = _touches(repo, cache, touch_since)
 
     for pair in attributions.pairs:
         commit = commits_by_sha.get(pair.commit_sha)
@@ -107,6 +109,13 @@ def analyze_survival(
                 target = commit.date + timedelta(days=horizon)
                 if target > now:
                     unit.pending_horizons.append(horizon)
+                    continue
+                if _untouched_between(touches, merges, commit, path, target):
+                    # No commit (and no merge) changed this path inside the
+                    # window, so every added line is still verbatim and the
+                    # file still exists — provable without a blame process.
+                    unit.deleted[horizon] = False
+                    unit.survived[horizon] = added
                     continue
                 ref = _snapshot(repo, target, cache)
                 deleted = path not in _tree(repo, ref, cache)
@@ -130,6 +139,28 @@ def _snapshot(repo: str, target: datetime, cache: dict) -> str:
     if key not in cache:
         cache[key] = gitdata.snapshot_ref(repo, target)
     return cache[key]
+
+
+def _touches(repo: str, cache: dict, since: datetime | None):
+    """The shared touch map (one ``git log --name-only`` pass), blame-cache keyed."""
+    key = ("__touches__", since.isoformat() if since else "all")
+    if key not in cache:
+        cache[key] = gitdata.path_touch_log(repo, since, None)
+    return cache[key]
+
+
+def _untouched_between(touches, merges, commit: CommitInfo, path: str, target: datetime) -> bool:
+    """True when no commit (nor any merge) could have changed ``path`` in
+    (commit.date, target]. Date ties with other commits count as touched
+    (conservative); the commit's own touch is excluded by sha.
+    """
+    for merge_date in merges:
+        if commit.date <= merge_date <= target:
+            return False
+    for touch_date, sha in touches.get(path, ()):
+        if sha != commit.sha and commit.date <= touch_date <= target:
+            return False
+    return True
 
 
 def _tree(repo: str, ref: str, cache: dict) -> set[str]:

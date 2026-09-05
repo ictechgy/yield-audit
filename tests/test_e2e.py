@@ -13,11 +13,17 @@ documented in conftest.py:
 from __future__ import annotations
 
 import json
+import subprocess
 
 import pytest
 
 from conftest import NOW, SESSION_A, SESSION_B
+from yield_audit import transcripts
 from yield_audit.cli import main
+
+
+def _git_init(path) -> None:
+    subprocess.run(["git", "-C", str(path), "init", "-b", "main"], check=True, capture_output=True)
 
 
 def sid(raw: str) -> str:
@@ -249,6 +255,45 @@ def test_horizon_30_fully_measured_later(fixture_env, capsys):
     assert data["m1_survival"]["overall_rate"] == pytest.approx(13 / 24)
     assert data["m1_survival"]["horizon_days"] == 30
     assert data["m1_survival"]["pending_units"] == 0
+
+
+def test_missing_transcripts_dir_fails_with_hint(fixture_env, capsys):
+    code = main(
+        [
+            "audit",
+            "--repo", fixture_env["repo_cwd"],
+            "--transcripts-dir", "/nonexistent/transcripts",
+            "--now", NOW,
+        ]
+    )
+    assert code == 2
+    err = capsys.readouterr().err
+    assert "transcripts dir not found" in err
+
+
+def test_no_default_roots_fails_with_doctor_hint(tmp_path, capsys, monkeypatch):
+    plain = tmp_path / "plain"
+    plain.mkdir()
+    _git_init(plain)
+    # both vendors' default roots point at paths that do not exist
+    for adapter in transcripts.ADAPTERS.values():
+        monkeypatch.setattr(
+            type(adapter), "default_root",
+            lambda self, _p=tmp_path: _p / "no-such-root",
+        )
+    code = main(["audit", "--repo", str(plain), "--now", NOW])
+    assert code == 2
+    err = capsys.readouterr().err
+    assert "no agent transcripts found" in err
+    assert "doctor" in err
+
+
+def test_zero_sessions_warns_with_doctor_hint(fixture_env, capsys):
+    code = main([*audit_argv(fixture_env), "--days", "1", "--format", "console"])
+    assert code == 0  # a valid measurement: no AI activity in the window
+    out = capsys.readouterr().out
+    assert "no agent sessions matched this repo" in out
+    assert "doctor" in out
 
 
 def test_non_git_repo_fails_cleanly(tmp_path, capsys):

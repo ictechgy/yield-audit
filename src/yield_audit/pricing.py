@@ -37,7 +37,10 @@ class ModelPrice:
         ) / 1_000_000
 
 
-# (input, output, cache_read, cache_write) USD per MTok, 2026-09 list prices.
+# (input, output, cache_read, cache_write) USD per MTok, standard tier,
+# published list prices 2026-09 (Anthropic / OpenAI developers pricing pages).
+# OpenAI charges no separate cache-write price; gpt-5.1-codex variants share
+# the gpt-5.1 base prices (the codex suffix is not separately listed).
 _BUILTIN: dict[str, tuple[float, float, float, float]] = {
     "claude-opus-5": (5.0, 25.0, 0.5, 6.25),
     "claude-opus-4-8": (5.0, 25.0, 0.5, 6.25),
@@ -52,6 +55,12 @@ _BUILTIN: dict[str, tuple[float, float, float, float]] = {
     "claude-haiku-4-5": (1.0, 5.0, 0.1, 1.25),
     "claude-fable-5-1": (10.0, 50.0, 0.25, 12.5),
     "claude-mythos-5-1": (10.0, 50.0, 0.25, 12.5),
+    "gpt-5.1-codex": (1.25, 10.0, 0.125, 0.0),
+    "gpt-5.1": (1.25, 10.0, 0.125, 0.0),
+    "gpt-5.3-codex": (1.75, 14.0, 0.175, 0.0),
+    "gpt-5-mini": (0.25, 2.0, 0.025, 0.0),
+    "o3": (2.0, 8.0, 0.5, 0.0),
+    "o4-mini": (1.1, 4.4, 0.275, 0.0),
 }
 
 _FALLBACK_KEY = "__fallback__"

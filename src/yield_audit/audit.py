@@ -56,7 +56,18 @@ def run_audit(
 
     repo_real = transcripts.normalize_path(repo)
     log_messages: list[str] = []
+    if transcripts_root is not None and not Path(transcripts_root).is_dir():
+        raise AuditError(f"transcripts dir not found: {transcripts_root}")
     roots = transcripts.resolve_roots(agents or transcripts.DEFAULT_AGENTS, transcripts_root)
+    if not roots:
+        tried = ", ".join(
+            f"{name} {transcripts.ADAPTERS[name].default_root()}"
+            for name in sorted(agents or transcripts.DEFAULT_AGENTS)
+        )
+        raise AuditError(
+            f"no agent transcripts found (tried: {tried}) — "
+            "pass --transcripts-dir or run `yield-audit doctor`"
+        )
     for name in sorted(set(transcripts.DEFAULT_AGENTS) - set(roots)):
         log_messages.append(f"agent {name}: transcripts root not found, skipped")
     if log is not None:
@@ -68,6 +79,11 @@ def run_audit(
         sessions = transcripts.load_sessions(
             repo_real, transcripts_root, now=now, days=days, agents=agents,
             logger=log_messages.append,
+        )
+    if not sessions:
+        log_messages.append(
+            "0 agent sessions matched this repo in the window — "
+            "run `yield-audit doctor --repo <repo>` to check transcript discovery"
         )
     transcripts.group_edit_files_by_repo(sessions, repo_real)
 
@@ -97,8 +113,9 @@ def run_audit(
             "total_tokens": cost.total_input_tokens + cost.output_tokens,
         }
 
-    # One shared blame/snapshot cache across lenses: M1 and M11 blame the
-    # same files at often-identical snapshot refs.
+    # One shared cache across lenses: blame/snapshot results plus the
+    # single touch-map pass that lets both skip blaming files no commit
+    # touched inside the measurement window.
     blame_cache: dict = {}
     survival = analyze_survival(
         repo_real,
@@ -108,6 +125,7 @@ def run_audit(
         horizons=horizons,
         headline_horizon=headline_horizon,
         blame_cache=blame_cache,
+        touch_since=since,
     )
     waste = analyze_waste(survival, {sid: c["cost_usd"] for sid, c in session_costs.items()}, headline_horizon)
 
@@ -139,6 +157,7 @@ def run_audit(
         now=now,
         horizon_days=rework_days,
         blame_cache=blame_cache,
+        touch_since=since,
     )
 
     unknown_models: set[str] = set()
