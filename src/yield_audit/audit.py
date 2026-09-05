@@ -166,21 +166,21 @@ def _survival_block(survival, show_paths: bool, details: bool) -> dict:
         "measurement": "measured_from_git_history",
         "horizon_days": survival.horizon,
         "overall_rate": _round(survival.overall),
-        "added_lines": survival.overall_added,
-        "survived_lines": survival.overall_survived,
+        "added_lines": _num(survival.overall_added),
+        "survived_lines": _num(survival.overall_survived),
         "pending_units": survival.pending_count,
         "by_kind": {
             kind: {
-                "added": info["added"],
-                "survived": info["survived"],
+                "added": _num(info["added"]),
+                "survived": _num(info["survived"]),
                 "rate": _round(info["rate"]),
             }
             for kind, info in survival.by_kind.items()
         },
         "per_session": {
             _sid(sid): {
-                "added": info["added"],
-                "survived": info["survived"],
+                "added": _num(info["added"]),
+                "survived": _num(info["survived"]),
                 "rate": _round(info["rate"]),
                 "pending": info["pending"],
             }
@@ -216,9 +216,9 @@ def _waste_block(waste) -> dict:
             _sid(sid): {
                 "lower_usd": round(b.lower_usd, 6),
                 "upper_usd": round(b.upper_usd, 6),
-                "removed_lines": b.removed_lines,
-                "rewritten_lines": b.rewritten_lines,
-                "edited_lines": b.edited_lines,
+                "removed_lines": _num(b.removed_lines),
+                "rewritten_lines": _num(b.rewritten_lines),
+                "edited_lines": _num(b.edited_lines),
             }
             for sid, b in sorted(waste.items())
         },
@@ -353,6 +353,13 @@ def _global_notes(pricing_notes: list[str]) -> list[str]:
 
 def _round(value, digits: int = 6):
     return round(value, digits) if isinstance(value, float) else value
+
+
+def _num(value):
+    """Collapse integral floats (share-weighted sums) to int for display."""
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
+    return value
 
 
 def _sid(session_id: str) -> str:
