@@ -69,6 +69,7 @@ def analyze_cache_locality(
     result.hit_rate = (total_read / total_base) if total_base else None
 
     boundaries = sorted(session.compact_boundaries)
+    boundary_idx = 0  # two-pointer over sorted boundaries: O(calls + boundaries)
     for index, call in enumerate(calls):
         if index == 0:
             continue  # the first call of a session is legitimately cold
@@ -76,7 +77,9 @@ def analyze_cache_locality(
             continue
         prev = calls[index - 1]
         gap = (call.ts - prev.ts).total_seconds()
-        compacted = any(prev.ts < b <= call.ts for b in boundaries)
+        while boundary_idx < len(boundaries) and boundaries[boundary_idx] < prev.ts:
+            boundary_idx += 1
+        compacted = boundary_idx < len(boundaries) and boundaries[boundary_idx] <= call.ts
         if compacted:
             class_name = COMPACTED
         elif gap > ttl.total_seconds():

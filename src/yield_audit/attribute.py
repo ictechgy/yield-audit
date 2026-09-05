@@ -55,7 +55,7 @@ def attribute(
     commit_files = {c.sha: set(c.files) for c in commits}
     session_files = {s.session_id: set(s.edited_files) for s in sessions}
 
-    claims: dict[str, list[tuple[str, str, int]]] = {}  # commit_sha -> [(session_id, grade, overlap)]
+    claims: dict[str, list[tuple[str, str, int, list[str]]]] = {}  # sha -> [(session_id, grade, overlap_n, shared_files)]
     for commit in commits:
         for session in sessions:
             edited = session_files[session.session_id]
@@ -70,7 +70,7 @@ def attribute(
                 continue
             grade = "high" if session.ran_git_commit else "medium"
             claims.setdefault(commit.sha, []).append(
-                (session.session_id, grade, len(overlap))
+                (session.session_id, grade, len(overlap), sorted(overlap))
             )
 
     pairs: list[Attribution] = []
@@ -79,26 +79,24 @@ def attribute(
         claim_list = claims.get(commit.sha, [])
         if not claim_list:
             continue
-        best_grade = min((g for _, g, _ in claim_list), key=GRADES.index)
-        winners = [(sid, grade, ov) for sid, grade, ov in claim_list if grade == best_grade]
-        # Highest overlap first; session_id as a deterministic tiebreaker.
-        winners.sort(key=lambda item: (-item[2], item[0]))
-        top_overlap = winners[0][2]
-        tied = [w for w in winners if w[2] == top_overlap]
-        if len(tied) > 1 and best_grade != "high":
+        best_grade = min((g for _, g, _, _ in claim_list), key=GRADES.index)
+        # Every same-grade claimant keeps a stake, split evenly: dropping
+        # lower-overlap claimants would silently erase their output from
+        # share-weighted aggregates downstream.
+        winners = [(sid, grade, ov, shared) for sid, grade, ov, shared in claim_list if grade == best_grade]
+        winners.sort(key=lambda item: item[0])  # deterministic order
+        share = 1.0
+        if len(winners) > 1:
             ambiguous.append(commit.sha)
-            share = 1.0 / len(tied)
-        else:
-            tied = tied[:1]
-            share = 1.0
-        for sid, grade, _ov in tied:
+            share = 1.0 / len(winners)
+        for sid, grade, _ov, shared in winners:
             pairs.append(
                 Attribution(
                     session_id=sid,
                     commit_sha=commit.sha,
                     grade=grade,
                     share=share,
-                    shared_files=sorted(edited & commit_files[commit.sha]),
+                    shared_files=shared,
                 )
             )
 

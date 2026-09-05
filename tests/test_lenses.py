@@ -80,8 +80,23 @@ def test_cache_classes_compaction_vs_ttl_vs_prefix_break():
     assert result.wasted_usd == pytest.approx(expected)
 
 
+def test_cache_boundary_at_previous_call_ts_counts_as_compaction():
+    # A compaction boundary stamped exactly at the previous call's ts must
+    # still be honored (<= tie rule), not billed as a prefix break.
+    table, fallback, _ = load_pricing()
+    session = make_session()
+    session.api_calls = [
+        ApiCall(T0, "claude-sonnet-5", 100, 0, 0, 0),
+        ApiCall(T0 + timedelta(minutes=1), "claude-sonnet-5", 200, 0, 0, 0),
+    ]
+    session.compact_boundaries = [T0]  # exactly the previous call's ts
+
+    result = analyze_cache_locality(session, table, fallback)
+    assert [e.class_name for e in result.events] == ["compaction"]
+    assert result.wasted_usd == 0.0
+
+
 def test_verify_status_transitions():
-    sessions = []
     # gap: commits, no verify command
     s_gap = make_session("gap")
     s_gap.tool_uses.append(ToolUse("u", T0, "Bash", {"command": "git commit -m x"}))
@@ -100,7 +115,8 @@ def test_verify_status_transitions():
     assert result.sessions["gap"].status == "gap"
     assert result.sessions["ok"].status == "verified_before_commit"
     assert result.sessions["after"].status == "verified_after_commit"
-    assert result.gap_rate == 1 / 3
+    assert result.gap_rate == 1 / 3  # only the never-verified session
+    assert result.gap_rate_strict == 2 / 3  # gap + verified-after
 
 
 def test_verify_correlation_reports_means():
@@ -115,7 +131,7 @@ def test_verify_correlation_reports_means():
     )
     assert result.correlation["gap"]["mean_survival"] == 0.2
     assert result.correlation["verified_before_commit"]["mean_survival"] == 0.8
-    assert "correlation is observational" in result.notes[0]
+    assert any("correlation is observational" in n for n in result.notes)
 
 
 def test_classify_path_kinds():
@@ -154,6 +170,28 @@ def test_survival_unit_classification_thresholds():
     assert classify_unit(unit_edited, 7) == EDITED
     unit_pending = SurvivalUnit("s", "c", "a.py", "source", added=10, pending_horizons=[7])
     assert classify_unit(unit_pending, 7) is None
+
+
+def test_waste_denominator_matches_the_classified_horizon():
+    # Unit is pending at the 7d headline but measured (fully removed) at 30d:
+    # at horizon=30 its share must be computed against 30d-measured lines only,
+    # so bounds can never exceed the session cost.
+    from yield_audit.lenses.survival import SurvivalResult
+    from yield_audit.lenses.waste import analyze_waste
+
+    unit = SurvivalUnit(
+        "s1", "c", "a.py", "source", added=10, share=1.0,
+        survived={30: 0}, deleted={30: True}, pending_horizons=[7],
+    )
+    survival = SurvivalResult(
+        horizon=7, units=[unit], pending_count=1,
+        overall=None, overall_added=0, overall_survived=0,
+        by_kind={}, sessions={"s1": {"added": 0, "survived": 0, "rate": None, "pending": 1}},
+        notes=[],
+    )
+    bounds = analyze_waste(survival, {"s1": 2.0}, horizon=30)
+    assert bounds["s1"].lower_usd == pytest.approx(2.0)  # single unit = 100% share
+    assert bounds["s1"].upper_usd == pytest.approx(2.0)
 
 
 def test_verify_pattern_matches_common_commands():

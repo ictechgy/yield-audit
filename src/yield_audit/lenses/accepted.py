@@ -36,8 +36,12 @@ def analyze_accepted(
     result = AcceptedResult()
     accepted_ids: list[str] = []
 
-    for session_id in sorted(session_costs):
-        cost_info = session_costs[session_id]
+    # Union so a session with attributed commits but no cost record still lands
+    # in a status instead of vanishing from the totals.
+    for session_id in sorted(set(session_costs) | set(committed_ids)):
+        cost_info = session_costs.get(
+            session_id, {"cost_usd": 0.0, "total_tokens": 0}
+        )
         if session_id not in committed_ids:
             status = NO_OUTPUT
         else:

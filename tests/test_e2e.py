@@ -128,8 +128,18 @@ def test_m5_cache_locality_golden(report):
 def test_m8_verify_gap_golden(report):
     m8 = report["m8_verify"]
     assert m8["gap_rate"] == 0.0  # the only committing session verified first
+    assert m8["gap_rate_strict"] == 0.0
     correlation = m8["correlation_with_survival"]
     assert correlation["verified_before_commit"]["mean_survival"] == pytest.approx(13 / 24, abs=1e-3)
+
+
+def test_report_redacts_home_and_commands(report, fixture_env):
+    # transcripts_root goes through home abbreviation; chain commands must not leak paths
+    from yield_audit.redact import abbreviate_home
+
+    assert report["parameters"]["transcripts_root"] == abbreviate_home(str(fixture_env["transcripts_root"]))
+    for chain in report["m3_retry"]["failure_chains"]:
+        assert not chain["command"].startswith("/")
 
 
 def test_show_paths_flag_unredacts(report, fixture_env, capsys):

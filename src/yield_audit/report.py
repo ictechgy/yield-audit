@@ -1,6 +1,13 @@
-"""Renderers for the report dict: console (plain text) and markdown."""
+"""Renderers for the report dict: console (plain text) and markdown.
+
+Strings in the report dict are already sanitized (control/ANSI stripped,
+paths redacted) by the audit pipeline; this module only adds
+format-specific escaping (markdown table cells).
+"""
 
 from __future__ import annotations
+
+from .redact import markdown_cell
 
 
 def render_console(report: dict) -> str:
@@ -43,6 +50,8 @@ def render_console(report: dict) -> str:
         add(f"tax tokens: {m3['total_tax_tokens']} / {m3['total_tokens']} ({pct(m3['tax_share'])})")
         for chain in m3["failure_chains"][:10]:
             add(f"  [{chain['session']}] {chain['attempts']} attempts, {chain['errors']} errors: {chain['command']}")
+        if m3.get("chains_truncated"):
+            add(f"  … {m3['chains_truncated']} more chains not shown")
     else:
         add("no bash activity observed")
     add("")
@@ -65,7 +74,7 @@ def render_console(report: dict) -> str:
 
     m8 = report["m8_verify"]
     add("== M8 verification gap ==")
-    add(f"gap rate (sessions committing without a verify command first): {pct(m8['gap_rate'])}")
+    add(f"gap rate (never verified): {pct(m8['gap_rate'])} | strict (not verified before last commit): {pct(m8.get('gap_rate_strict'))}")
     for status, info in m8["correlation_with_survival"].items():
         add(f"  {status:24} mean survival {pct(info['mean_survival'])} over {info['sessions']} sessions")
     add("")
@@ -127,7 +136,10 @@ def render_markdown(report: dict) -> str:
         add("| session | attempts | errors | command |")
         add("|---|---|---|---|")
         for chain in m3["failure_chains"][:20]:
-            add(f"| {chain['session']} | {chain['attempts']} | {chain['errors']} | `{chain['command']}` |")
+            safe_command = markdown_cell(chain["command"])
+            add(f"| {chain['session']} | {chain['attempts']} | {chain['errors']} | `{safe_command}` |")
+        if m3.get("chains_truncated"):
+            add(f"\n_…{m3['chains_truncated']} more chains not shown._")
     else:
         add("No bash activity observed.")
     add("")
@@ -158,7 +170,7 @@ def render_markdown(report: dict) -> str:
     m8 = report["m8_verify"]
     add("## M8 verification gap")
     add("")
-    add(f"Gap rate: {pct(m8['gap_rate'])}.")
+    add(f"Gap rate (never verified): {pct(m8['gap_rate'])}; strict (not verified before last commit): {pct(m8.get('gap_rate_strict'))}.")
     add("")
     if m8["correlation_with_survival"]:
         add("| status | sessions | mean survival |")

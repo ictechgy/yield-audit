@@ -1,15 +1,21 @@
 """Thin read-only git wrapper.
 
 Every command runs with ``cwd=repo`` and is strictly read-only (log, show,
-blame, rev-list, cat-file). Failures raise :class:`GitError` with the
-command and stderr so callers can degrade honestly instead of guessing.
+blame, rev-list, cat-file, ls-tree). The subprocess environment is stripped
+of ``GIT_*`` variables so a stray ``GIT_DIR`` in the user's shell cannot
+silently redirect the audit at a different repository. Failures raise
+:class:`GitError` with the command and stderr so callers can degrade
+honestly instead of guessing.
 """
 
 from __future__ import annotations
 
+import os
 import subprocess
 from dataclasses import dataclass
 from datetime import datetime
+
+_HEX = set("0123456789abcdef")
 
 
 class GitError(RuntimeError):
@@ -24,6 +30,10 @@ class CommitInfo:
     files: dict[str, int]  # path -> added lines (binary files excluded)
 
 
+def _clean_env() -> dict[str, str]:
+    return {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+
+
 def _run(repo: str, args: list[str]) -> str:
     try:
         proc = subprocess.run(
@@ -33,6 +43,7 @@ def _run(repo: str, args: list[str]) -> str:
             encoding="utf-8",
             errors="replace",
             check=False,
+            env=_clean_env(),
         )
     except FileNotFoundError as exc:  # git not installed
         raise GitError("git executable not found on PATH") from exc
@@ -59,42 +70,83 @@ def _has_commits(repo: str) -> bool:
         return False
 
 
-def commits_with_numstat(repo: str, since: datetime | None, until: datetime | None) -> list[CommitInfo]:
+def commits_with_numstat(
+    repo: str,
+    since: datetime | None,
+    until: datetime | None,
+    warnings: list[str] | None = None,
+) -> list[CommitInfo]:
     """Commits in [since, until] with per-file added-line counts.
 
-    Merge commits naturally contribute no numstat rows and therefore zero added
-    lines; parent/first-parent semantics do not matter for added-line accounting.
+    Streams git output line by line (full history with ``--days 0`` can be
+    hundreds of MB). Commits whose date cannot be parsed are skipped with a
+    warning instead of aborting the audit. Merge commits contribute no
+    numstat rows and therefore zero added lines. ``core.quotePath=false``
+    keeps non-ASCII paths readable; a literal newline inside a path remains
+    a documented v0.1 limitation.
     """
     if not _has_commits(repo):
         return []
     fmt = "@@@%H%x1f%aI%x1f%s"
-    args = ["log", f"--pretty=format:{fmt}", "--numstat", "--no-renames"]
+    args = [
+        "-c", "core.quotePath=false",
+        "log", f"--pretty=format:{fmt}", "--numstat", "--no-renames",
+    ]
     if since is not None:
         args.append(f"--since={since.isoformat()}")
     if until is not None:
         args.append(f"--until={until.isoformat()}")
-    out = _run(repo, args)
 
     commits: list[CommitInfo] = []
     current: CommitInfo | None = None
-    for line in out.splitlines():
-        if line.startswith("@@@"):
-            if current is not None:
-                commits.append(current)
-            parts = line[3:].split("\x1f")
-            date = _parse_git_date(parts[1] if len(parts) > 1 else "")
-            current = CommitInfo(
-                sha=parts[0] if parts else "",
-                date=date,
-                summary=parts[2] if len(parts) > 2 else "",
-                files={},
-            )
-        elif current is not None and "\t" in line:
-            cols = line.split("\t")
-            if len(cols) >= 3 and cols[0].isdigit():
-                path = "/".join(cols[2:]).strip()
-                if path:
-                    current.files[path] = int(cols[0])
+    skip_current = False
+    try:
+        proc = subprocess.Popen(
+            ["git", "-C", repo, *args],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            env=_clean_env(),
+        )
+    except FileNotFoundError as exc:
+        raise GitError("git executable not found on PATH") from exc
+
+    assert proc.stdout is not None
+    with proc.stdout:
+        for line in proc.stdout:
+            line = line.rstrip("\n")
+            if line.startswith("@@@"):
+                if current is not None:
+                    commits.append(current)
+                current = None
+                skip_current = False
+                parts = line[3:].split("\x1f")
+                sha = parts[0] if parts else ""
+                try:
+                    date = _parse_git_date(parts[1] if len(parts) > 1 else "")
+                except GitError:
+                    if warnings is not None:
+                        warnings.append(f"skipped commit {sha[:8]}: unparseable date")
+                    skip_current = True
+                    continue
+                current = CommitInfo(
+                    sha=sha,
+                    date=date,
+                    summary=parts[2] if len(parts) > 2 else "",
+                    files={},
+                )
+            elif skip_current:
+                continue
+            elif current is not None and "\t" in line:
+                cols = line.split("\t")
+                if len(cols) >= 3 and cols[0].isdigit():
+                    path = "/".join(cols[2:])
+                    if path:
+                        current.files[path] = int(cols[0])
+    if proc.wait() != 0:
+        raise GitError(f"git log failed with exit code {proc.returncode}")
     if current is not None:
         commits.append(current)
     return commits
@@ -117,25 +169,41 @@ def snapshot_ref(repo: str, target_date: datetime) -> str:
     return _run(repo, ["rev-parse", "HEAD"]).strip()
 
 
-def file_exists_at(repo: str, ref: str, path: str) -> bool:
+def tree_files(repo: str, ref: str) -> set[str]:
+    """All file paths present at ``ref`` — one process instead of N cat-files."""
+    out = _run(repo, ["ls-tree", "-r", "--name-only", ref])
+    return {line for line in out.splitlines() if line}
+
+
+def blame_sha_counts(repo: str, ref: str, path: str) -> dict[str, int]:
+    """Per-current-line origin SHA counts at ``ref`` (streamed; counts only).
+
+    Only ``sha == attributed commit`` comparisons are ever needed downstream,
+    so the per-line list collapses to a counter — blame output for large
+    files otherwise dominates memory (porcelain includes file content).
+    """
+    counts: dict[str, int] = {}
     try:
-        _run(repo, ["cat-file", "-e", f"{ref}:{path}"])
-        return True
-    except GitError:
-        return False
-
-
-def blame_line_shas(repo: str, ref: str, path: str) -> list[str]:
-    """Per-current-line origin SHA at ``ref`` (porcelain blame, first header line only)."""
-    out = _run(repo, ["blame", "-l", "--porcelain", ref, "--", path])
-    shas: list[str] = []
-    for line in out.splitlines():
-        if not line:
-            continue
-        first = line.split(" ", 1)[0]
-        if len(first) >= 40 and all(c in "0123456789abcdef" for c in first):
-            shas.append(first)
-    return shas
+        proc = subprocess.Popen(
+            ["git", "-C", repo, "blame", "-l", "--porcelain", ref, "--", path],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            env=_clean_env(),
+        )
+    except FileNotFoundError as exc:
+        raise GitError("git executable not found on PATH") from exc
+    assert proc.stdout is not None
+    with proc.stdout:
+        for line in proc.stdout:
+            first = line.split(" ", 1)[0].strip()
+            if len(first) >= 40 and set(first) <= _HEX:
+                counts[first] = counts.get(first, 0) + 1
+    if proc.wait() != 0:
+        raise GitError(f"git blame {ref}:{path} failed with exit code {proc.returncode}")
+    return counts
 
 
 def head_sha(repo: str) -> str:

@@ -14,7 +14,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from . import gitdata, transcripts
+from . import gitdata, redact, transcripts
 from .attribute import attribute as attribute_fn
 from .costs import session_cost
 from .lenses.accepted import analyze_accepted
@@ -58,7 +58,8 @@ def run_audit(
     transcripts.group_edit_files_by_repo(sessions, repo_real)
 
     since = now - timedelta(days=days) if days and days > 0 else None
-    commits = gitdata.commits_with_numstat(repo_real, since=since, until=None)
+    git_warnings: list[str] = []
+    commits = gitdata.commits_with_numstat(repo_real, since=since, until=None, warnings=git_warnings)
     commits_by_sha = {c.sha: c for c in commits}
 
     attributions = attribute_fn(
@@ -118,11 +119,11 @@ def run_audit(
         "schema_version": SCHEMA_VERSION,
         "generated_at": now.astimezone(timezone.utc).isoformat(),
         "parameters": {
-            "repo": repo_real,
+            "repo": repo_real if show_paths else redact.abbreviate_home(repo_real),
             "window_days": days,
             "horizons_days": list(horizons),
             "headline_horizon_days": headline_horizon,
-            "transcripts_root": str(transcripts_root),
+            "transcripts_root": redact.abbreviate_home(str(transcripts_root)),
             "attribution_proximity_hours": proximity_hours,
             "pricing_source": "builtin_2026-09" if not pricing_override else str(pricing_override),
         },
@@ -133,16 +134,16 @@ def run_audit(
             "attributed_commits": len(attributions.claimed_shas),
             "unclaimed_commits": len(attributions.unclaimed_commits),
             "ambiguous_commits": attributions.ambiguous_commits,
-            "unknown_models": sorted(unknown_models),
+            "unknown_models": sorted(redact.sanitize_text(m) for m in unknown_models),
         },
         "attribution": _attribution_block(attributions),
         "m1_survival": _survival_block(survival, show_paths, details),
         "m2_waste": _waste_block(waste),
-        "m3_retry": _retry_block(retry_by_session),
+        "m3_retry": _retry_block(retry_by_session, show_paths),
         "m4_accepted": _accepted_block(accepted),
         "m5_cache": _cache_block(cache_by_session),
         "m8_verify": _verify_block(verify),
-        "notes": _global_notes(pricing_notes),
+        "notes": _global_notes(pricing_notes) + git_warnings,
     }
     return report
 
@@ -191,7 +192,7 @@ def _survival_block(survival, show_paths: bool, details: bool) -> dict:
         block["units"] = [
             {
                 "session": _sid(u.session_id),
-                "path": _path(u.path, show_paths),
+                "path": redact.redact_path(u.path, show_paths=show_paths),
                 "kind": u.kind,
                 "added": u.added,
                 "survived": u.survived.get(survival.horizon),
@@ -225,13 +226,13 @@ def _waste_block(waste) -> dict:
     return block
 
 
-def _retry_block(retry_by_session) -> dict:
+def _retry_block(retry_by_session, show_paths: bool) -> dict:
     total_tax_tokens = sum(r.tax_tokens for r in retry_by_session.values())
     total_tokens = sum(r.total_tokens for r in retry_by_session.values())
     chains = [
         {
             "session": _sid(sid),
-            "command": _truncate(c.command, 80),
+            "command": redact.sanitize_command(c.command, show_paths=show_paths, limit=80),
             "attempts": c.attempts,
             "errors": c.errors,
         }
@@ -243,7 +244,8 @@ def _retry_block(retry_by_session) -> dict:
         "total_tax_tokens": total_tax_tokens,
         "total_tokens": total_tokens,
         "tax_share": _round(total_tax_tokens / total_tokens) if total_tokens else None,
-        "failure_chains": chains,
+        "failure_chains": chains[:200],
+        "chains_truncated": max(0, len(chains) - 200),
         "per_session": {
             _sid(sid): {
                 "tax_tokens": r.tax_tokens,
@@ -322,6 +324,7 @@ def _verify_block(verify) -> dict:
     return {
         "measurement": "observed_from_transcripts",
         "gap_rate": _round(verify.gap_rate),
+        "gap_rate_strict": _round(verify.gap_rate_strict),
         "per_session": {
             _sid(sid): {
                 "status": info.status,
@@ -354,13 +357,3 @@ def _round(value, digits: int = 6):
 
 def _sid(session_id: str) -> str:
     return session_id[:8]
-
-
-def _truncate(text: str, limit: int) -> str:
-    return text if len(text) <= limit else text[: limit - 1] + "…"
-
-
-def _path(path: str, show_paths: bool) -> str:
-    if show_paths:
-        return path
-    return path.rsplit("/", 1)[-1]

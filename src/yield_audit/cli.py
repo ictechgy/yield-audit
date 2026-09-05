@@ -15,7 +15,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import __version__, audit, transcripts
+from . import __version__, audit, gitdata, transcripts
 from .report import render_console, render_markdown
 
 
@@ -81,6 +81,11 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    try:  # report text is user-data derived; never crash on a hostile locale
+        sys.stdout.reconfigure(errors="replace")
+        sys.stderr.reconfigure(errors="replace")
+    except (AttributeError, ValueError):  # pragma: no cover - non-text streams
+        pass
     parser = _build_parser()
     args = parser.parse_args(argv)
     try:
@@ -88,7 +93,7 @@ def main(argv: list[str] | None = None) -> int:
             return _run_audit(args)
         if args.command == "doctor":
             return _run_doctor(args)
-    except audit.AuditError as exc:
+    except (audit.AuditError, gitdata.GitError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
     parser.error(f"unknown command {args.command!r}")
@@ -107,6 +112,8 @@ def _resolve_now(raw: str | None) -> datetime:
 
 
 def _run_audit(args) -> int:
+    if args.days < 0:
+        raise audit.AuditError("--days must be >= 0 (0 disables the time window)")
     repo = Path(args.repo).expanduser().resolve()
     transcripts_root = args.transcripts_dir or transcripts.default_transcripts_root()
     horizons = _parse_horizons(args.horizons)
@@ -176,7 +183,7 @@ def _run_doctor(args) -> int:
             )
             total_sessions = len(sessions)
             checks.append((total_sessions > 0, f"sessions with cwd == repo: {total_sessions}"))
-            if not audit.gitdata.is_git_repo(repo):
+            if not gitdata.is_git_repo(repo):
                 checks.append((False, f"not a git repository: {repo}"))
 
     for ok, message in checks:

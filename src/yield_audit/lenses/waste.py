@@ -54,33 +54,34 @@ def analyze_waste(
     session_costs: dict[str, float],
     horizon: int,
 ) -> dict[str, WasteBound]:
-    """Session-id -> bounds. Only sessions with measured output are included.
+    """Session-id -> bounds. Only sessions with classified units are included.
 
     Line counts are attribution-share weighted (``attributed_added``), so a
     commit contested by two sessions contributes to each session's bounds in
-    proportion to its share.
+    proportion to its share. The share denominator is the sum of units
+    *classified at the same horizon* — using the headline-horizon aggregate
+    instead would let pending-at-headline units push shares above 1.0.
     """
-    measured_added: dict[str, float] = {}
-    for session_id, info in survival.sessions.items():
-        if info["added"] > 0:
-            measured_added[session_id] = info["added"]
+    units_by_session: dict[str, list[SurvivalUnit]] = {}
+    for unit in survival.units:
+        if classify_unit(unit, horizon) is not None:
+            units_by_session.setdefault(unit.session_id, []).append(unit)
 
     out: dict[str, WasteBound] = {}
-    for session_id in sorted(measured_added):
-        total_added = measured_added[session_id]
+    for session_id in sorted(units_by_session):
+        session_units = units_by_session[session_id]
+        total_added = sum(u.attributed_added for u in session_units)
+        if total_added <= 0:
+            continue
         cost = session_costs.get(session_id, 0.0)
         lower = upper = 0.0
         removed = rewritten = edited = 0.0
         class_counts = {REMOVED: 0, REWRITTEN: 0, EDITED: 0}
-        for unit in survival.units:
-            if unit.session_id != session_id:
-                continue
+        for unit in session_units:
             cls = classify_unit(unit, horizon)
-            if cls is None:
-                continue
             class_counts[cls] += 1
             effective = unit.attributed_added
-            share = cost * (effective / total_added) if total_added else 0.0
+            share = cost * (effective / total_added)
             if cls == REMOVED:
                 removed += effective
                 lower += share

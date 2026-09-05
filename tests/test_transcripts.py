@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timezone
+from pathlib import Path
 
 from yield_audit import transcripts
 from yield_audit.events import normalize_command, parse_iso8601
@@ -109,6 +110,66 @@ def test_relative_edited_files_drop_outside_paths(fixture_env):
     assert "app.py" in session_a.edited_files
     assert "tests/test_core.py" in session_a.edited_files
     assert all(not f.startswith("/") for f in session_a.edited_files)
+
+
+def test_float_usage_tokens_are_truncated_not_zeroed(tmp_path):
+    root = tmp_path / "transcripts"
+    root.mkdir()
+    record = {
+        "type": "assistant",
+        "sessionId": "sid-float",
+        "timestamp": "2026-08-01T10:00:00Z",
+        "cwd": str(tmp_path),
+        "message": {
+            "role": "assistant",
+            "model": "claude-sonnet-5",
+            "content": [],
+            "usage": {
+                "input_tokens": 100.7,
+                "output_tokens": 20.2,
+                "cache_read_input_tokens": 300.0,
+                "cache_creation_input_tokens": 0,
+            },
+        },
+    }
+    (root / "float.jsonl").write_text(json.dumps(record) + "\n", encoding="utf-8")
+    sessions = transcripts.load_sessions(str(tmp_path), root, now=parse_iso8601("2026-08-02T00:00:00Z"), days=1)
+    call = sessions[0].api_calls[0]
+    assert (call.input_tokens, call.output_tokens, call.cache_read_tokens) == (100, 20, 300)
+
+
+def test_munged_directory_prefilter_and_fallback(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    repo_cwd = str(repo.resolve())
+    root = tmp_path / "projects"
+    munged = root / repo_cwd.replace("/", "-")
+    munged.mkdir(parents=True)
+    other = root / "-somewhere-else"
+    other.mkdir()
+
+    def write_session(directory: Path, name: str) -> None:
+        record = {
+            "type": "assistant",
+            "sessionId": f"sid-{name}",
+            "timestamp": "2026-08-01T10:00:00Z",
+            "cwd": repo_cwd if name != "wrong" else "/elsewhere",
+            "message": {"role": "assistant", "model": "m", "content": [], "usage": {}},
+        }
+        (directory / f"{name}.jsonl").write_text(json.dumps(record) + "\n", encoding="utf-8")
+
+    write_session(munged, "right")
+    write_session(other, "wrong")
+
+    # prefilter: munged dir exists -> its sessions are found without walking elsewhere
+    sessions = transcripts.load_sessions(repo_cwd, root, now=parse_iso8601("2026-08-02T00:00:00Z"), days=1)
+    assert [s.session_id for s in sessions] == ["sid-right"]
+
+    # fallback: root without a munged dir degrades to a full walk (finds nothing here)
+    empty_root = tmp_path / "empty-projects"
+    empty_root.mkdir()
+    sessions = transcripts.load_sessions(repo_cwd, empty_root, now=parse_iso8601("2026-08-02T00:00:00Z"), days=1)
+    assert sessions == []
 
 
 def test_parse_iso8601_handles_z_and_naive():

@@ -46,6 +46,38 @@ def default_transcripts_root() -> Path:
     return Path.home() / ".claude" / "projects"
 
 
+def iter_transcript_files(root: Path, repo_real: str, logger=None) -> list[Path]:
+    """Transcript files to scan, newest-layout first.
+
+    Claude Code stores a project's sessions under a directory named after its
+    cwd with separators replaced by ``-``. When that directory exists we scan
+    only it — a 100x+ shortcut over parsing every project's logs. Anything
+    unusual (missing dir, unusual layout) falls back to a full walk, which
+    follows symlinked directories (``Path.rglob`` does not).
+    """
+    munged = repo_real.replace("/", "-")
+    candidate = root / munged
+    if candidate.is_dir():
+        files = sorted(candidate.glob("*.jsonl"))
+        if logger:
+            logger(f"prefilter: scanning munged project dir {candidate.name} ({len(files)} files)")
+        if files:
+            return files
+    files = _walk_jsonl(root)
+    if logger:
+        logger(f"full transcript walk under {root} ({len(files)} files)")
+    return files
+
+
+def _walk_jsonl(root: Path) -> list[Path]:
+    out: list[Path] = []
+    for dirpath, _dirnames, filenames in os.walk(root, followlinks=True):
+        for filename in filenames:
+            if filename.endswith(".jsonl"):
+                out.append(Path(dirpath) / filename)
+    return sorted(out)
+
+
 def load_sessions(
     repo: str,
     transcripts_root: Path,
@@ -68,15 +100,14 @@ def load_sessions(
         cutoff = now - timedelta(days=days)
 
     sessions: dict[str, Session] = {}
-    found_any_jsonl = False
-    for jsonl in sorted(transcripts_root.rglob("*.jsonl")):
-        found_any_jsonl = True
+    jsonl_files = iter_transcript_files(transcripts_root, repo_real, logger)
+    for jsonl in jsonl_files:
         try:
             _ingest_file(jsonl, repo_real, sessions)
         except (OSError, UnicodeDecodeError) as exc:
             if logger:
                 logger(f"skip unreadable transcript {jsonl.name}: {exc.__class__.__name__}")
-    if not found_any_jsonl and logger:
+    if not jsonl_files and logger:
         logger(f"no *.jsonl transcripts found under {transcripts_root}")
 
     selected = []
@@ -163,7 +194,12 @@ def _ingest_record(record: dict, path: Path, repo_real: str, sessions: dict[str,
 
 
 def _int(value) -> int:
-    return value if isinstance(value, int) and value >= 0 else 0
+    """Token counts: ints pass; floats (some client versions) truncate; junk is 0."""
+    if isinstance(value, bool):
+        return 0
+    if isinstance(value, (int, float)) and value >= 0:
+        return int(value)
+    return 0
 
 
 def _ingest_assistant(record: dict, message: dict, ts, session: Session) -> None:

@@ -40,7 +40,8 @@ class VerificationInfo:
 @dataclass
 class VerifyGapResult:
     sessions: dict[str, VerificationInfo] = field(default_factory=dict)
-    gap_rate: float | None = None  # among sessions with attributed commits
+    gap_rate: float | None = None  # never verified, among sessions with commits
+    gap_rate_strict: float | None = None  # not verified before the last commit (gap + verified-after)
     correlation: dict[str, dict] = field(default_factory=dict)
     notes: list[str] = field(default_factory=list)
 
@@ -73,8 +74,14 @@ def analyze_verify_gap(
     committed = [
         info for info in result.sessions.values() if info.status != "no_commits"
     ]
-    gaps = [info for info in committed if info.status == "gap"]
-    result.gap_rate = (len(gaps) / len(committed)) if committed else None
+    if committed:
+        gaps = [info for info in committed if info.status == "gap"]
+        strict = [info for info in committed if info.status in ("gap", "verified_after_commit")]
+        result.gap_rate = len(gaps) / len(committed)
+        result.gap_rate_strict = len(strict) / len(committed)
+    result.notes.append(
+        "gap_rate = never verified; gap_rate_strict = not verified before the last attributed commit (includes verified-after)"
+    )
 
     # Correlation: mean survival by verification status (measurable sessions only).
     buckets: dict[str, list[float]] = {}

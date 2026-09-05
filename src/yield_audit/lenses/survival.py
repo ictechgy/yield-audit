@@ -109,16 +109,15 @@ def analyze_survival(
                     unit.pending_horizons.append(horizon)
                     continue
                 ref = _snapshot(repo, target, cache)
-                deleted = not gitdata.file_exists_at(repo, ref, path)
+                deleted = path not in _tree(repo, ref, cache)
                 unit.deleted[horizon] = deleted
                 if deleted:
                     unit.survived[horizon] = 0
                     continue
                 key = (ref, path)
                 if key not in cache:
-                    cache[key] = gitdata.blame_line_shas(repo, ref, path)
-                shas = cache[key]
-                unit.survived[horizon] = sum(1 for sha in shas if sha == commit.sha)
+                    cache[key] = gitdata.blame_sha_counts(repo, ref, path)
+                unit.survived[horizon] = cache[key].get(commit.sha, 0)
             units.append(unit)
 
     notes.append("survival semantics: lines still present exactly as the commit left them (git blame); renames/copies not followed in v0.1")
@@ -130,6 +129,14 @@ def _snapshot(repo: str, target: datetime, cache: dict) -> str:
     key = ("__snapshot__", target.isoformat())
     if key not in cache:
         cache[key] = gitdata.snapshot_ref(repo, target)
+    return cache[key]
+
+
+def _tree(repo: str, ref: str, cache: dict) -> set[str]:
+    """File set at ``ref`` — one ls-tree process replaces N cat-file probes."""
+    key = ("__tree__", ref)
+    if key not in cache:
+        cache[key] = gitdata.tree_files(repo, ref)
     return cache[key]
 
 
