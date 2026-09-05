@@ -1,88 +1,169 @@
 # yield-audit
 
-> **English TL;DR** — `yield-audit` is a local, read-only CLI that crosses your AI coding agent's session transcripts with your git history and reports what *survived*: output survival rate, waste cost bounds, retry tax, cost per accepted task, cache locality, and verification gaps. Zero runtime dependencies (git + Python stdlib only). Nothing leaves your machine.
+> [한국어 문서](README.ko.md) | English documentation.
 
-**yield-audit**은 AI 코딩 에이전트의 세션이 만들어낸 출력의 **운명**을 측정하는 완전 로컬 옵저버토리입니다. ccusage가 *청구서*를 보여준다면, yield-audit은 **그 토큰 중 얼마나 살아남은 코드에 쓰였는지**를 보여줍니다.
+**Your CI dashboard says commits are up 40% since the AI rollout. yield-audit
+tells you that 22% of that output was reworked within two weeks — and that
+the rework rate on AI-marked commits is 1.7x the human rate.**
 
-핵심 질문은 단순합니다: *에이전트가 쓴 코드 중 일주일 뒤에도 남아 있는 것은 몇 %인가? 그리고 죽은 코드에 돈을 얼마나 썼는가?*
+`yield-audit` is a local, read-only CLI that crosses your AI coding agent's
+session transcripts with your git history and reports what actually
+*survived*: output survival rate, waste cost bounds, retry tax, cost per
+accepted task, cache locality, verification gaps, and AI-vs-human rework
+rates. Where usage tools (ccusage et al.) show the *bill*, yield-audit shows
+what the tokens left behind.
 
-## 빠른 시작
+- **Fully local** — transcripts and git history are read; there is no
+  networking code in the package at all.
+- **Read-only & deterministic** — nothing is written to your repositories;
+  `--now` pins a run for reproducibility.
+- **Zero runtime dependencies** — Python ≥ 3.10 stdlib + the `git` CLI.
+- **Vendor-neutral** — scans Claude Code (`~/.claude/projects`) and Codex
+  CLI (`~/.codex/sessions`) transcripts; more adapters via a registry.
+
+## Quick start
 
 ```bash
-# 설치 (PyPI 게시 전: 이 저장소 루트에서 직접)
-python3 -m pip install .            # or: uv pip install .
+# install (PyPI)
+python3 -m pip install yield-audit      # or: uv tool install yield-audit
+# one-shot, no install:
+uvx yield-audit audit --repo /path/to/your/repo
 
-# 저장소 결과 보기 (기본: 설치된 모든 에이전트 트랜스크립트를 자동 스캔 —
-#   Claude Code ~/.claude/projects, Codex CLI ~/.codex/sessions)
+# audit a repository (auto-scans every installed agent's transcripts)
 yield-audit audit --repo /path/to/your/repo
 
-# 특정 에이전트만 보기
+# one vendor only
 yield-audit audit --repo . --agent codex
 
-# JSON / 마크다운 리포트
+# JSON / markdown reports
 yield-audit audit --repo . --format json --details
 yield-audit audit --repo . --format markdown > yield-report.md
 
-# 환경 점검 (git, 트랜스크립트, 세션 탐지)
+# environment check (git, transcript roots, session discovery)
 yield-audit doctor --repo /path/to/your/repo
 ```
 
-요구 사항: Python ≥ 3.10, git. 런타임 의존성 없음. 네트워크 호출 없음.
+Requirements: Python ≥ 3.10, git. No runtime dependencies. No network calls.
 
-## 측정 렌즈 (v0.1–v0.3)
+## Sample output
 
-| 렌즈 | 질문 | 성격 |
-|---|---|---|
-| **M1 출력 생존율** | 커밋된 줄 중 horizon(기본 7일) 시점에도 그대로 남아 있는 비율. source/test/docs/config 유형별 분할 | git history 기반 측정 |
-| **M2 낭비 비용** | 죽은 출력에 들인 비용. 완전삭제(하한) ~ 50%+ 소실(상한) **구간**으로 보고 | 추정(구간) |
-| **M3 재시도 세금** | 실패 후 같은 명령을 반복한 실패 사슬에 소비된 토큰 비율 | 트랜스크립트 관측 |
-| **M4 채택 작업당 비용** | 생존율 ≥ 50%인 세션 1건당 완전부담 비용. accepted/rejected/pending/no_output 분류 | 추정(관측 토큰 × 공시요금) |
-| **M5 캐시 지역성** | TTL 만료·프리픽스 파손으로 정가를 치른 콜드 호출 수와, 캐시였다면 아꼈을 금액. 컴팩션 직후 재구축은 예외 분류 | 추정(관측 토큰 × 공시요금) |
-| **M8 검증 공백률** | 커밋 전 검증 명령이 없던 세션 비율(미검증율·엄격율 두 가지) + 검증 유무별 생존율 상관 | 트랜스크립트 관측 |
-| **M11 AI 리워크율** | AI 표지 커밋은 인간 커밋보다 rework horizon(기본 14일, `--rework-days`) 내 얼마나 더 재작성되나. 코호트 근거(certain=푸터/probable=세션 조인/human) 분포 동봉 — 판정 도구가 아닌 계량 도구 | git history 기반 측정 |
+```text
+$ yield-audit audit --repo .
+input: 3 sessions, 10 api calls, 4 commits (1 attributed, 3 unclaimed)
 
-### 정직성 계약
+== M1 output survival ==
+overall survival: 54.2% of 24 added lines (pending units: 0)
+  source     50.0%  (5/10 lines)
+  test      100.0%  (6/6 lines)
+  docs        0.0%  (0/4 lines)
+  config     50.0%  (2/4 lines)
 
-- 모든 수치에 `measurement` 라벨이 붙습니다: `observed`(트랜스크립트/git에서 직접 관측) / `estimate`(관측값 × 공시요금) / `proxy`(명시된 대체량 — 예: 커밋별 토큰 배분의 줄 점유 프록시).
-- 어트리뷰션(세션↔커밋 매칭)은 확률적이므로 **신뢰도 등급**(`high` = 세션이 직접 커밋 실행 / `medium` = 파일·시간 교집합)과 모호 커밋 분할을 항상 보고합니다.
-- "수정 = 낭비"가 아닙니다: 50% 미만 소실은 반복(iteration)으로 분류해 어느 쪽 구간에도 넣지 않습니다.
-- 절감을 주장하지 않습니다. 측정만 합니다. 개입 기능은 로드맵(v1.x)에 게이트 뒤에 있습니다.
+== M2 waste cost (bounds) ==
+lower $0.00 — upper $0.00
+  (session cost x attribution-share-weighted line-share proxy x waste class ...)
 
-## 프라이버시
+== M3 retry tax ==
+tax tokens: 240 / 4000 (6.0%)
+  [claude:bbbbbbbb] 2 attempts, 2 errors: npm test
 
-- 트랜스크립트와 git 이력을 **읽기만** 합니다. 어떤 데이터도 기기를 떠나지 않습니다(네트워크 호출 코드가 아예 없습니다).
-- 리포트의 파일 경로는 기본적으로 basename으로 레닥션되고, 실패 사슬 명령어 안의 절대경로도 `<path>`로 치환됩니다(`--show-paths`로 해제).
-- 트랜스크립트에서 온 모든 문자열(세션 ID 포함)은 리포트로 가기 전에 ANSI·C0/C1 제어문자가 제거되고, 리포트 전체에 재귀 살균이 한 번 더 적용됩니다 — 콘솔·마크다운 어디로 봐도 터미널을 건드리지 않습니다.
-- 실패 사슬 명령어 안의 절대경로·`~/` 경로는 `<path>`로 치환됩니다. Windows UNC 경로(`\\host\share`)는 자유 텍스트에서는 미처리 한계가 있습니다.
-- git 서브프로세스는 `GIT_*` 환경변수를 떼고 실행되어, 셸의 `GIT_DIR` 등이 감사 대상을 몰래 바꾸지 못합니다.
-- 세션 ID는 리포트에서 앞 8자만 사용합니다.
+== M8 verification gap ==
+gap rate (never verified): 0.0% | strict (not verified before last commit): 0.0%
 
-## 방법론과 한계
-
-- **생존 판정**: `git blame --porcelain`으로 horizon 시점 스냅샷에서 커밋이 추가한 줄의 귀속을 확인합니다. 나중 줄이 고쳐졌다면 생존하지 않은 것입니다. **v0.1은 rename/copy를 따라가지 않으므로** 이름 바뀐 파일은 삭제로 집계됩니다 (문서화된 한계).
-- **커밋별 토큰 배분**: 트랜스크립트에는 커밋별 토큰이 없으므로 세션 비용을 줄 점유로 나눕니다(프록시 라벨).
-- **커밋 어트리뷰션**: 세션이 편집한 파일 × 커밋 파일 집합 × 시간 근접(기본 24시간, `--proximity-hours`). 페어 프로그래밍·수동 커밋은 등급이 낮아지거나 미귀속됩니다. 여러 세션이 한 커밋을 다투면 어트리뷰션 share로 균등 분할되고 모호 커밋으로 표시됩니다.
-- **스케일**: 생존 판정은 커밋×파일×horizon마다 blame을 읽으므로 비용이 커밋 수에 선형입니다. 수백 커밋 규모에서 수 초~수십 초를 예상하세요.
-- **요금표**: 2026-09 공시가 내장(`pricing.py`, Anthropic + OpenAI 표준 티어). `--pricing-file`로 덮어쓸 수 있고, 미지 모델은 보수적 상위 요금 + 플래그 처리됩니다.
-- 상관분석(M8)은 관찰 결과이며 인과가 아닙니다. 세션 수가 적으면 아무것도 증명하지 않습니다.
-
-## 로드맵
-
-- ~~**v0.2**~~ — ✅ 출시: 벤더 어댑터 패키지(Claude Code + Codex CLI, `--agent`), 세션 id 네임스페이싱. Gemini는 스키마 확보 후 추가.
-- **v0.3** — ✅ M11 AI 리워크율 출시(코호트 certain/probable/human, `--rework-days`). 남은 항목: M12 정착률(blame 스냅샷), `aidd` 서브커맨드 통합 리포트(코호트 비교 표), 배치 스케줄 조언(M5 확장), 개인 라우팅 힌트(옵트인 리플레이), M13/M14(CI 데이터 의존)
-- **v1.x** — 개입 계층(재시도 조기 포기 훅, 결정적 오라클 라우팅) — 각자 증거 게이트 뒤에서
-
-## 개발
-
-```bash
-git clone <this repo> && cd yield-audit
-python3 -m pip install -e '.[dev]'   # or: uv pip install -e '.[dev]'
-pytest                               # 테스트 (고정 날짜 픽스처 git 저장소 사용)
-ruff check .                         # 린트
+== M11 AI rework ==
+reworked within 14d, by cohort (evidence-graded, not verdicts):
+  certain    60.0%  (6/10 lines, 0 pending)
+  probable   45.8%  (11/24 lines, 0 pending)
+  human       0.0%  (0/13 lines, 1 pending)
+  AI combined 50.0% vs human 0.0%  (evidence: certain=1, human=2, probable=1)
 ```
 
-기여 시: 모든 렌즈 로직은 순수 함수여야 하고(렌즈 = 이벤트 모델의 함수), 새 메트릭에는 `measurement` 라벨과 골든 테스트가 필요합니다. AI 에이전트로 기여한다면 [AGENTS.md](AGENTS.md)의 규약이 이 문서의 일반 안내보다 우선합니다.
+## Lenses (v0.1–v0.3)
 
-## 라이선스
+| Lens | Question | Nature |
+|---|---|---|
+| **M1 output survival** | Of the committed lines, how many are still verbatim at the horizon (default 7d)? Split by source/test/docs/config | measured from git history |
+| **M2 waste cost** | Money spent on dead output — reported as a lower~upper **bound** (deleted = both bounds; ≥50% lost = upper only) | estimate (bounds) |
+| **M3 retry tax** | Token share burned in failure chains (same command repeated after errors) | observed from transcripts |
+| **M4 cost per accepted task** | Fully-loaded cost per session whose output survived ≥ 50%; accepted/rejected/pending/no_output | estimate (observed × list price) |
+| **M5 cache locality** | Cold calls paying full price from TTL expiry / prefix breaks, and what a cache read would have cost | estimate (observed × list price) |
+| **M8 verification gap** | Share of sessions that never ran a verification command before committing, correlated with survival | observed from transcripts |
+| **M11 AI rework rate** | How much faster is AI-marked output reworked than human output within the rework horizon (default 14d, `--rework-days`)? Ships with cohort evidence (certain = AI footer / probable = session join / human) — a measurement, not a verdict | measured from git history |
 
-Apache-2.0. 방법론적 뿌리: [arXiv:2601.16809](https://arxiv.org/abs/2601.16809)(AI 생성 코드의 생존 분석)와 "성공 1회당 완전부담비용" 관점.
+### Honesty contract
+
+- Every metric carries a `measurement` label: `observed` (read straight from
+  transcripts/git) / `estimate` (observed × list price) / `proxy` (a stated
+  stand-in, e.g. line-share standing in for per-commit token share).
+- Attribution (session↔commit matching) is probabilistic, so every dependent
+  number inherits **confidence grades** (`high` = the session ran the commit /
+  `medium` = file & time overlap) and contested commits are split and flagged.
+- Editing is not waste: <50% line loss is classified as iteration and counted
+  in neither bound.
+- No savings claims. Measurement only; intervention features stay behind a
+  v1.x evidence gate.
+
+## Privacy
+
+- Transcripts and git history are **read only**. Nothing leaves your machine —
+  the package contains no networking code.
+- Report paths are redacted to basenames by default; absolute and `~/` paths
+  inside commands become `<path>` (`--show-paths` to undo). Windows UNC paths
+  in free text are a documented gap.
+- Every transcript-derived string (session ids included) is stripped of
+  ANSI/C0/C1 control characters before it reaches a report, and the finished
+  report is deep-sanitized recursively — no format can touch your terminal.
+- git subprocesses run with `GIT_*` environment variables removed, so a stray
+  `GIT_DIR` in your shell cannot redirect the audit.
+- Session ids are truncated to 8 characters in reports.
+
+## Methodology & limits
+
+- **Survival**: `git blame --porcelain` at a snapshot taken horizon-days after
+  the commit; lines a later commit rewrote or deleted did not survive.
+  Renames/copies are not followed in v0.1 — a renamed file counts as deleted.
+- **Token attribution**: transcripts have no per-commit tokens, so session
+  cost is split across commits by line share (labeled `proxy`).
+- **Commit attribution**: edited-files ∩ commit-files × time proximity
+  (default 24h, `--proximity-hours`). Pair programming and manual commits
+  grade lower or stay unattributed. Contested commits split evenly and are
+  flagged.
+- **Scale**: survival/rework blame cost is linear in commits × files; a
+  touch-map prefilter skips files no later commit changed, so a
+  hundred-commit full-history audit runs in well under a second.
+- **Pricing**: published list prices 2026-09 (Anthropic + OpenAI standard
+  tier) built into `pricing.py`; override with `--pricing-file`; unknown
+  models get a conservative top-tier price and are flagged.
+- M8 correlations are observations, not causation. Small session counts
+  prove nothing.
+
+## Roadmap
+
+- **v0.2** — ✅ shipped: vendor adapter registry (Claude Code + Codex CLI,
+  `--agent`), namespaced session ids. Gemini lands once its schema is
+  grounded.
+- **v0.3** — ✅ M11 AI rework rate shipped (cohorts certain/probable/human,
+  `--rework-days`). Remaining: M12 settle rate (blame snapshots), the `aidd`
+  cohort-comparison report, M13/M14 (external CI data).
+- **v1.x** — intervention layer (retry early-abort hooks, deterministic
+  oracle routing) — each behind its own evidence gate.
+
+## Development
+
+```bash
+git clone https://github.com/ictechgy/yield-audit && cd yield-audit
+python3 -m pip install -e '.[dev]'   # or: uv pip install -e '.[dev]'
+pytest                               # tests (fixed-date fixture git repo)
+ruff check .                         # lint
+```
+
+Contributions: lens logic must stay pure functions, and every new metric
+needs a `measurement` label plus a golden test. If you contribute via an AI
+agent, [AGENTS.md](AGENTS.md) takes precedence over the general guidance
+here. Adding a transcript vendor is one `TranscriptAdapter` subclass plus a
+registry entry — see [src/yield_audit/transcripts/](src/yield_audit/transcripts/).
+
+## License
+
+Apache-2.0. Methodological roots: [arXiv:2601.16809](https://arxiv.org/abs/2601.16809)
+(survival analysis of AI-generated code) and the fully-loaded-cost-per-success
+perspective.

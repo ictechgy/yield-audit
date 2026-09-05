@@ -54,7 +54,7 @@ cohorts.py 코호트 라벨 + lenses/rework.py + `--rework-days` + 리포트 `m1
 
 ## 3. 백로그 (우선순위 낮음, 근거 있음)
 
-- [ ] PyPI 게시 결정 → 게시 시 README 퀵스타트를 `uvx yield-audit`로 복원, pyproject URL 확정
+- [x] PyPI 게시 (v0.3.2) — 신뢰 퍼블리셔(OIDC) `pypi.yml`, 태그 푸시로 게시. README 영어화 + 한국어 README.ko.md 분리, 퀵스타트 `uvx yield-audit` 복원
 - [ ] UNC 경로(`\\host\share`) 자유 텍스트 레닥션 — 현재 README에 문서화된 한계
 - [x] 터치 프리필터(v0.3.1) — path_touch_log 원패스로 무터치 파일 blame 스킵(머지 가드 포함).
       스냅샷 캐시 일(day) 버킷팅 옵션은 여전히 백로그 — rev-list/ls-tree 절감용

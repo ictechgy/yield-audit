@@ -4,6 +4,22 @@ All notable changes to yield-audit are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning is
 SemVer.
 
+## [0.3.2] - 2026-09-06
+
+Distribution release: published to PyPI via trusted publishing (OIDC —
+the pending publisher registered on pypi.org for `.github/workflows/
+pypi.yml` claims the name on first run; no API tokens anywhere).
+
+### Changed
+- README is now fully English (the PyPI landing page) with the M11
+  rework-rate one-liner as the headline and a sample console report;
+  the Korean README moved to `README.ko.md`. Install docs switched from
+  source-install to `pip install yield-audit` / `uvx yield-audit`.
+
+### Added
+- `.github/workflows/pypi.yml` — build + `twine check` + publish on
+  `v*` tag push (and manual dispatch).
+
 ## [0.3.1] - 2026-09-06
 
 Trust, first-run, and performance fixes from the v0.3.0 review.
