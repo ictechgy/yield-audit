@@ -54,9 +54,9 @@ def report(fixture_env, capsys) -> dict:
 def test_report_schema(report):
     assert report["schema_version"] == "yieldaudit.report.v1"
     assert report["input"]["sessions"] == 3
-    assert report["input"]["commits_in_window"] == 4
+    assert report["input"]["commits_in_window"] == 5
     assert report["input"]["attributed_commits"] == 1
-    assert report["input"]["unclaimed_commits"] == 3
+    assert report["input"]["unclaimed_commits"] == 4
 
 
 def test_attribution_grades(report):
@@ -149,19 +149,64 @@ def test_m11_rework_golden(report):
     assert m11["measurement"] == "measured_from_git_history"
     assert m11["rework_horizon_days"] == 14
     # evidence grades ship with every percentage (판정 아님 원칙)
-    assert m11["cohort_evidence"] == {"certain": 1, "probable": 1, "human": 2}
+    assert m11["cohort_evidence"] == {"certain": 1, "probable": 1, "human": 3}
     cohorts = m11["cohorts"]
     assert cohorts["certain"]["reworked_lines"] == 6
     assert cohorts["certain"]["rework_rate"] == pytest.approx(0.6)
     assert cohorts["probable"]["reworked_lines"] == 11
     assert cohorts["probable"]["rework_rate"] == pytest.approx(11 / 24)
     assert cohorts["human"]["reworked_lines"] == 0
-    assert cohorts["human"]["pending_commits"] == 1
+    assert cohorts["human"]["pending_commits"] == 2
     assert cohorts["ai_combined"]["rework_rate"] == pytest.approx(0.5)
     # per-commit detail rows exist under --details and carry evidence strings
     rows = {row["label"]: row for row in m11["commits"]}
     assert rows["certain"]["evidence"] == "footer:claude"
     assert rows["probable"]["evidence"] == "session_join:time_window+files"
+
+
+def test_m12_settle_golden_at_default_90d(report):
+    m12 = report["m12_settle"]
+    assert m12["measurement"] == "measured_from_git_history"
+    assert m12["settle_horizon_days"] == 90
+    # every commit's 90d horizon lands after now=08-20: nothing measurable
+    for label in ("certain", "probable", "human", "ai_combined"):
+        info = m12["cohorts"][label]
+        assert info["settle_rate"] is None
+        assert info["pending_commits"] == info["commits"]
+    assert m12["cohorts"]["human"]["commits"] == 3
+
+
+def test_m12_settle_golden_at_7d(fixture_env, capsys):
+    code = main([*audit_argv(fixture_env), "--format", "json", "--settle-days", "7"])
+    assert code == 0
+    data = json.loads(capsys.readouterr().out)
+    cohorts = data["m12_settle"]["cohorts"]
+    assert cohorts["probable"]["added_lines"] == 24
+    assert cohorts["probable"]["survived_lines"] == 13
+    assert cohorts["probable"]["settle_rate"] == pytest.approx(13 / 24)
+    assert cohorts["certain"]["settle_rate"] == pytest.approx(0.4)  # C3: 4 of 10 remain
+    # human: C2 13/13 untouched, C4 4/6 (C5 rewrote 2), C5 2/2 -> 19/21
+    assert cohorts["human"]["added_lines"] == 21
+    assert cohorts["human"]["survived_lines"] == 19
+    assert cohorts["human"]["settle_rate"] == pytest.approx(19 / 21)
+
+
+def test_m14_incident_golden(report):
+    m14 = report["m14_incident"]
+    assert m14["measurement"] == "proxy"
+    assert m14["fix_commits"] == 1  # "fix: correct feature notes" only
+    assert m14["targeted_lines_total"] == 2
+    assert m14["targeted_lines_by_cohort"] == {"certain": 0, "probable": 0, "human": 2}
+    assert m14["top_origins"][0]["lines"] == 2
+    assert m14["top_origins"][0]["label"] == "human"
+
+
+def test_settle_days_flag_disables_m12(fixture_env, capsys):
+    code = main([*audit_argv(fixture_env), "--format", "json", "--settle-days", "0"])
+    assert code == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data["parameters"]["settle_horizon_days"] == 0
+    assert data["m12_settle"]["cohorts"] == {}
 
 
 def test_rework_days_flag_disables_m11(fixture_env, capsys):

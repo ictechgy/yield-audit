@@ -42,11 +42,25 @@ yield-audit audit --repo . --format markdown > yield-report.md
 # AI-transition comparison: two windows split at your rollout date
 yield-audit aidd --repo . --split 2026-03-01 --days 90
 
+# session timelines as a Perfetto trace (optional extra)
+pip install 'yield-audit[perfetto]'
+yield-audit export --perfetto --repo . --out trace.perfetto.json
+
+# pre-warm the blame/tree cache (cron-friendly)
+yield-audit snapshot --repo .
+
 # environment check (git, transcript roots, session discovery)
 yield-audit doctor --repo /path/to/your/repo
+
+# export the session timeline as a Perfetto trace (optional extra)
+python3 -m pip install 'yield-audit[perfetto]'
+yield-audit export --perfetto --repo . --out session.perfetto.json
+# then drag the file into https://ui.perfetto.dev (parsed locally, never uploaded)
 ```
 
 Requirements: Python >= 3.10, git. No runtime dependencies. No network calls.
+(`export --perfetto` pulls in [agent2perfetto](https://github.com/ictechgy/agent2perfetto)
+only when you install the extra.)
 
 ## Time windows (and how they interact)
 
@@ -104,6 +118,8 @@ reworked within 14d, by cohort (evidence-graded, not verdicts):
 | **M5 cache locality** | Cold calls paying full price from TTL expiry / prefix breaks, and what a cache read would have cost | estimate (observed × list price) |
 | **M8 verification gap** | Share of sessions that never ran a verification command before committing, correlated with survival | observed from transcripts |
 | **M11 AI rework rate** | How much faster is AI-marked output reworked than human output within the rework horizon (default 14d, `--rework-days`)? Ships with cohort evidence (certain = AI footer / probable = session join / human) — a measurement, not a verdict | measured from git history |
+| **M12 settle rate** | Is AI-marked code still there months later? Cohort survival at the settle horizon (default 90d, `--settle-days`) — the complement of M11 at a longer horizon | measured from git history |
+| **M14 incident origins** | When fix/revert/rollback commits land, whose lines were they pointing at? Blame-count drops across fix commits, attributed to origin-commit cohorts | proxy |
 
 ### Honesty contract
 
@@ -163,6 +179,11 @@ reworked within 14d, by cohort (evidence-graded, not verdicts):
 - **v0.4** — ✅ `aidd` transition report shipped: two windows split at a
   rollout date, AI-vs-human rework cohorts per period (`--split`, `--days`),
   plus a persistent content-addressed cache and Codex transcript pruning.
+- **v0.5** — ✅ M12 settle rate (`--settle-days`) and M14 incident-origin
+  cohorts shipped, plus `snapshot` (cache pre-warming) and a Perfetto
+  export (`export --perfetto`, optional extra). M13 (verification-tax
+  transfer) stays deferred: it needs external CI data, which the
+  local-only contract forbids until an explicit opt-in design exists.
 - **v1.x** — intervention layer (retry early-abort hooks, deterministic
   oracle routing) — each behind its own evidence gate.
 

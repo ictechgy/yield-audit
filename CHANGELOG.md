@@ -4,6 +4,58 @@ All notable changes to yield-audit are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning is
 SemVer.
 
+## [0.5.0] - 2026-09-06
+
+The `export` subcommand: session timelines as trace files for other tools.
+
+### Added
+- `export --perfetto`: writes a Perfetto/Chrome trace JSON of the selected
+  sessions (assistant-call slices, tool-call slices with call→result flow
+  arrows, ctx_*/spend_* counter lanes) that loads in ui.perfetto.dev via
+  drag-and-drop — rendered by [agent2perfetto](https://github.com/ictechgy/agent2perfetto)
+  through its vendor-neutral Agent Trace IR. Accepts the same
+  `--repo`/`--transcripts-dir`/`--agent`/`--days` selection as `audit`.
+- Optional `perfetto` extra (`pip install 'yield-audit[perfetto]'`): the
+  base install stays stdlib-only; without the extra, `export --perfetto`
+  fails with an install hint instead of at import time. CI installs the
+  extra so the export path is tested on every matrix cell.
+
+## [0.5.0] - 2026-09-06
+
+Backlog sweep: the remaining M-series lenses, cache pre-warming, and a
+Perfetto export.
+
+### Added
+- M12 settle rate (`lenses/settle.py`, `--settle-days`, default 90,
+  0 = skip): cohort survival at a long horizon — the exact complement of
+  M11 at the same horizon, reported separately because the horizons
+  differ by design. Report block `m12_settle` (schema v1, additive).
+- M14 incident origins (`lenses/incident.py`): fix/revert/rollback
+  commits' blame-count drops attributed to origin-commit cohorts
+  (measurement: proxy). Report block `m14_incident`.
+- `snapshot` subcommand: runs the pipeline once to pre-warm the
+  persistent blame/tree cache and prints deterministic counts only —
+  cron-friendly.
+- Perfetto export (`export --perfetto`, optional `[perfetto]` extra via
+  agent2perfetto >= 0.2.1): session timelines as a ui.perfetto.dev trace
+  through the Agent Trace IR contract. The base install stays
+  stdlib-only; the import is deferred and failure prints an install hint.
+- GitHub Actions pinned to official release SHAs within the current
+  majors (checkout v4.4.0, setup-python v5.6.0, upload-artifact v4.6.2,
+  download-artifact v4.3.0, pypi-publish v1.14.2).
+
+### Changed
+- Fixture repo gained C5 (a human fix commit reworking two of C4's
+  lines); window goldens updated (5 commits / 4 unclaimed), M11 goldens
+  shift only in cohort counts and pending.
+- `cache.save` returns the number of persisted entries (int) instead of
+  a bool.
+
+### Deferred
+- M13 (verification-tax transfer) requires external CI data; the
+  local-only contract forbids network calls until an explicit opt-in
+  design exists.
+
 ## [0.4.0] - 2026-09-06
 
 The AIDD transition report plus performance infrastructure from the

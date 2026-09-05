@@ -103,6 +103,32 @@ def render_console(report: dict) -> str:
             )
     add("")
 
+    m12 = report["m12_settle"]
+    add("== M12 settle rate ==")
+    if m12["settle_horizon_days"] <= 0:
+        add("disabled (--settle-days 0)")
+    else:
+        add(f"still verbatim after {m12['settle_horizon_days']}d, by cohort:")
+        for label in ("certain", "probable", "human", "ai_combined"):
+            info = m12["cohorts"].get(label)
+            if info and info["commits"]:
+                add(
+                    f"  {label:12} {pct(info['settle_rate']):>7}  "
+                    f"({info['survived_lines']}/{info['added_lines']} lines, {info['pending_commits']} pending)"
+                )
+    add("")
+
+    m14 = report["m14_incident"]
+    add("== M14 incident origins ==")
+    if m14["fix_commits"]:
+        add(
+            f"{m14['fix_commits']} fix/revert commit(s) targeted {m14['targeted_lines_total']} lines; "
+            f"by origin cohort: {', '.join(f'{k}={v}' for k, v in m14['targeted_lines_by_cohort'].items())} (proxy)"
+        )
+    else:
+        add("no fix/revert/rollback commits in the window")
+    add("")
+
     add("-- notes --")
     for note in report["notes"]:
         add(f"  {note}")

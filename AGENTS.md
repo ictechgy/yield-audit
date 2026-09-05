@@ -45,6 +45,7 @@ cli.py            argparse, 종료코드 0/2, stdout 로케일 방어
        ├─ lenses/          M1–M11 측정 렌즈 (순수 함수 — 하위 AGENTS.md 참고)
        ├─ cache.py         ~/.cache/yield-audit 영구 캐시 (blame/tree — 내용 주소형, 무효화 불필요)
        ├─ redact.py        출력 경계: 살균·레닥션·deep_sanitize
+       ├─ export.py        세션 타임라인 → 타 도구 포맷 (--perfetto, 선택 extra — 계약은 agent2perfetto IR)
        └─ report.py        console/json/markdown 렌더러
 ```
 

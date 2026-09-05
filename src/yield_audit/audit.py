@@ -19,8 +19,10 @@ from .attribute import attribute as attribute_fn
 from .costs import session_cost
 from .lenses.accepted import analyze_accepted
 from .lenses.cache_locality import analyze_cache_locality
+from .lenses.incident import analyze_incidents
 from .lenses.retry import analyze_retry
 from .lenses.rework import analyze_rework
+from .lenses.settle import analyze_settle
 from .lenses.survival import analyze_survival
 from .lenses.verify_gap import analyze_verify_gap
 from .lenses.waste import analyze_waste
@@ -47,6 +49,7 @@ def run_audit(
     details: bool,
     agents=None,
     rework_days: int = 14,
+    settle_days: int = 90,
     since: datetime | None = None,
     until: datetime | None = None,
     use_cache: bool = True,
@@ -164,6 +167,16 @@ def run_audit(
         blame_cache=blame_cache,
         touch_since=window_since,
     )
+    settle = analyze_settle(
+        repo_real,
+        commits,
+        cohort_labels,
+        now=now,
+        horizon_days=settle_days,
+        blame_cache=blame_cache,
+        touch_since=window_since,
+    )
+    incidents = analyze_incidents(repo_real, commits, cohort_labels, blame_cache=blame_cache)
 
     unknown_models: set[str] = set()
     for cost in cost_objects.values():
@@ -184,6 +197,7 @@ def run_audit(
             },
             "attribution_proximity_hours": proximity_hours,
             "rework_horizon_days": rework_days,
+            "settle_horizon_days": settle_days,
             "window_start": window_since.isoformat() if window_since else None,
             "window_end": until.isoformat() if until else None,
             "cache": "on" if use_cache else "off",
@@ -206,6 +220,8 @@ def run_audit(
         "m5_cache": _cache_block(cache_by_session),
         "m8_verify": _verify_block(verify),
         "m11_rework": _rework_block(rework, details),
+        "m12_settle": _settle_block(settle, details),
+        "m14_incident": _incident_block(incidents),
         "notes": _global_notes(pricing_notes) + git_warnings + log_messages[:20],
     }
     if use_cache:
@@ -409,6 +425,41 @@ def _rework_block(rework, details: bool) -> dict:
         block["commits"] = rework.commits[:200]
         block["commits_truncated"] = max(0, len(rework.commits) - 200)
     return block
+
+
+def _settle_block(settle, details: bool) -> dict:
+    block = {
+        "measurement": "measured_from_git_history",
+        "settle_horizon_days": settle.horizon_days,
+        "cohort_evidence": dict(sorted(settle.evidence.items())),
+        "cohorts": {
+            label: {
+                "commits": info["commits"],
+                "measured_commits": info["measured_commits"],
+                "pending_commits": info["pending_commits"],
+                "added_lines": _num(info["added"]),
+                "survived_lines": _num(info["survived"]),
+                "settle_rate": _round(info["rate"]),
+            }
+            for label, info in sorted(settle.cohorts.items())
+        },
+        "notes": settle.notes,
+    }
+    if details:
+        block["commits"] = settle.commits[:200]
+        block["commits_truncated"] = max(0, len(settle.commits) - 200)
+    return block
+
+
+def _incident_block(incidents) -> dict:
+    return {
+        "measurement": "proxy",
+        "fix_commits": incidents.fix_commits,
+        "targeted_lines_total": incidents.targeted_lines_total,
+        "targeted_lines_by_cohort": dict(sorted(incidents.by_cohort.items())),
+        "top_origins": incidents.origins,
+        "notes": incidents.notes,
+    }
 
 
 def _verify_block(verify) -> dict:

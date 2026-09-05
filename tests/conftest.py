@@ -19,6 +19,10 @@ Timeline (all UTC):
 - Commit C4 @ 2026-08-09 09:00 (M11 human): rewrites 6 of feature.md's
   10 lines. C3's 14d rework snapshot is 08-19 <= now -> C3 rework 6/10;
   C4's own horizon (08-23) is pending at the default now.
+- Commit C5 @ 2026-08-10 09:00 (M14 fix commit, human): "fix: correct
+  feature notes" rewrites 2 of C4's v2 lines (C3's 4 surviving original
+  lines untouched -> M11 goldens shift only in cohort counts). C5's own
+  14d horizon (08-24) is pending at the default now.
 - Session B: 2026-08-04 10:00 – 10:03, repeats a failing ``npm test``
   (retry-tax chain), then runs ``pytest`` once; no edits, no commits.
 - Session C: 2026-08-04 10:10 – 10:16, one compaction boundary followed by
@@ -128,6 +132,19 @@ def build_repo(base: Path) -> Path:
     )
     _git(repo, "add", "-A")
     _git(repo, "commit", "-m", "c4: rework feature", date=c4_date)
+
+    c5_date = "2026-08-10T09:00:00+00:00"
+    _write(
+        repo,
+        "feature.md",
+        "feature v2 line 1\n"
+        "feature v2.1 line 2\n"
+        "feature v2.1 line 3\n"
+        + "".join(f"feature v2 line {i}\n" for i in range(4, 7))
+        + "".join(f"feature line {i}\n" for i in range(7, 11)),
+    )
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-m", "fix: correct feature notes", date=c5_date)
     return repo
 
 

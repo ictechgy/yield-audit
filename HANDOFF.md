@@ -50,6 +50,16 @@ cohorts.py 코호트 라벨 + lenses/rework.py + `--rework-days` + 리포트 `m1
 - [ ] **M10 핸드오프 세금**: 서브에이전트 페이로드 측정. 트랜스크립트에 기록된
       Agent/Task 도구 호출의 부모↔자식 구조 파싱.
 
+### v0.5.0 완료 (2026-09-06)
+
+- [x] **`export --perfetto`**: 세션 타임라인을 Perfetto 트레이스로 출력.
+      `export.py`가 events.Session → agent2perfetto Agent Trace IR 매핑
+      (ApiCall→model_call, cache_read/write→IR cache 키 그대로, ToolUse는
+      usage 없는 model_call — 0.2.2부터 빈 usage는 카운터 샘플 없음).
+      선택 extra `perfetto = agent2perfetto>=0.2.1` 로 런타임 의존성 0 규약 유지.
+      CI는 `.[dev,perfetto]` 설치. 원래 계획의 "M5/M10 레인 네이티브 트랙"은
+      ctx_cache_read/ctx_input 레인으로 충족(M10 렌즈 자체가 미착수).
+
 각 항목: 단위 테스트 + E2E 골든 + conftest docstring 갱신까지가 완료 정의(tests/AGENTS.md §6).
 
 ## 3. 백로그 (우선순위 낮음, 근거 있음)
@@ -59,7 +69,8 @@ cohorts.py 코호트 라벨 + lenses/rework.py + `--rework-days` + 리포트 `m1
 - [x] 터치 프리필터(v0.3.1) + 영구 캐시(v0.4.0, cache.py — blame/tree 내용 주소형).
       스냅샷 캐시 일(day) 버킷팅 옵션은 여전히 백로그 — rev-list/ls-tree 절감용
 - [x] `doctor` 용량·파일수·에이전트별 세션 수 리포트 (v0.4.0)
-- [ ] v0.3 잔여: M12 정착률(blame 스냅샷, `--snapshot` 서브커맨드), M5 기반 배치 스케줄 조언, M6 개인 라우팅 힌트(옵트인 리플레이) — M11은 0.3.0으로 출시됨(기획서-AIDD의 M11 인간 수정 시간과는 별개 표기 정리 필요 없음, 해당 항목은 M13/M14로 통합 검토)
+- [x] M12 정착률 출시(v0.5.0, `--settle-days` + `snapshot` 캐시 예열 서브커맨드). M14 인시던트 출처 코호트도 로컬 계량으로 출시(fix 커밋 전후 blame 차감). M13(검증 세금 전이)은 외부 CI 데이터 필요 — 옵트인 네트워크 설계 승인 전까지 보류
+- [ ] v0.3 잔여: M5 기반 배치 스케줄 조언, M6 개인 라우팅 힌트(옵트인 리플레이)
 
 ## 4. 절대 어기지 말 것 (회귀 방지)
 

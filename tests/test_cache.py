@@ -17,7 +17,7 @@ def test_cache_roundtrip_only_keeps_immutable_keys(tmp_path, monkeypatch):
         ("__snapshot__", "2026-08-08T00:00:00+00:00"): "abc123",
         ("__touches__", "all"): {"src/x.py": [1, 2]},
     }
-    assert cache.save("/repo", {**blame, **tree, **volatile}) is True
+    assert cache.save("/repo", {**blame, **tree, **volatile}) == 2
 
     loaded = cache.load("/repo")
     assert loaded == {**blame, **tree}  # snapshot/touch entries dropped
@@ -63,3 +63,19 @@ def test_second_audit_reuses_persisted_blame(fixture_env, monkeypatch):
     # are blamed on the first run and served from the cache on the second
     assert first > 0
     assert second == 0
+
+
+def test_snapshot_subcommand_warms_cache(fixture_env, capsys):
+    from yield_audit import cache as cache_mod
+
+    argv = [
+        "snapshot",
+        "--repo", fixture_env["repo_cwd"],
+        "--transcripts-dir", str(fixture_env["transcripts_root"]),
+        "--now", NOW,
+    ]
+    assert main(argv) == 0
+    out = capsys.readouterr().out
+    assert "snapshot ok: 3 sessions, 5 commits scanned" in out
+    assert "immutable git-fact entries" in out
+    assert cache_mod.cache_path(fixture_env["repo_cwd"]).is_file()

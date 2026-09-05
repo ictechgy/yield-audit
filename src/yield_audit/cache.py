@@ -72,8 +72,12 @@ def load(repo_real: str) -> dict:
     return out
 
 
-def save(repo_real: str, cache: dict) -> bool:
-    """Persist the cache's immutable entries atomically. Best-effort."""
+def save(repo_real: str, cache: dict) -> int:
+    """Persist the cache's immutable entries atomically.
+
+    Best-effort: returns the number of entries written (0 on failure or
+    when there is nothing immutable to store).
+    """
     entries: dict[str, object] = {}
     for key, value in cache.items():
         if not isinstance(key, tuple) or len(key) != 2:
@@ -86,7 +90,7 @@ def save(repo_real: str, cache: dict) -> bool:
         elif isinstance(value, dict):
             entries[head + _SEP + tail] = value
     if not entries:
-        return False
+        return 0
     target = cache_path(repo_real)
     try:
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -102,5 +106,5 @@ def save(repo_real: str, cache: dict) -> bool:
         # rename only after close: Windows refuses to replace an open file
         os.replace(tmp_name, target)
     except OSError:
-        return False
-    return True
+        return 0
+    return len(payload)

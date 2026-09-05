@@ -5,6 +5,7 @@
              date, AI-vs-human rework rates per period.
 ``doctor`` — check the environment (git, transcripts, session discovery) without
              computing any metrics.
+``export`` — write session timelines to another tool's format (--perfetto).
 
 Exit codes: 0 success, 2 configuration/environment error.
 """
@@ -85,6 +86,12 @@ def _build_parser() -> argparse.ArgumentParser:
         help="rework horizon for the M11 cohort lens in days (default 14, 0 = skip)",
     )
     p_audit.add_argument(
+        "--settle-days",
+        type=int,
+        default=90,
+        help="M12 settle-rate horizon in days (default 90, 0 = skip)",
+    )
+    p_audit.add_argument(
         "--no-cache",
         action="store_true",
         help="skip the persistent blame/tree cache (~/.cache/yield-audit; content-addressed by git SHA, never affects output)",
@@ -131,6 +138,38 @@ def _build_parser() -> argparse.ArgumentParser:
     p_doctor.add_argument("--repo", default=None, help="optionally verify sessions exist for this repository")
     p_doctor.add_argument("--transcripts-dir", type=Path, default=None)
     p_doctor.add_argument("--agent", default="auto", help="agent vendors to check (default auto)")
+
+    p_export = sub.add_parser(
+        "export",
+        help="write session timelines to another tool's format",
+    )
+    p_export.add_argument(
+        "--perfetto",
+        action="store_true",
+        help="write a Perfetto trace JSON that loads in ui.perfetto.dev "
+        "(requires the perfetto extra: pip install 'yield-audit[perfetto]')",
+    )
+    p_export.add_argument("--repo", required=True, help="path to the git repository the sessions ran in")
+    p_export.add_argument("--transcripts-dir", type=Path, default=None, help="transcripts root override")
+    p_export.add_argument("--agent", default="auto", help="which agent's transcripts to scan (default auto)")
+    p_export.add_argument("--days", type=int, default=30, help="session window in days (default 30, 0 = all)")
+    p_export.add_argument("--out", type=Path, required=True, help="output trace path (.perfetto.json)")
+    p_export.add_argument("--now", type=str, default=None, help="override 'now' as ISO-8601 (reproducible runs)")
+
+    p_snap = sub.add_parser(
+        "snapshot",
+        help="pre-warm the persistent blame/tree cache (run periodically, e.g. from cron)",
+    )
+    p_snap.add_argument("--repo", required=True, help="path to the git repository to snapshot")
+    p_snap.add_argument("--transcripts-dir", type=Path, default=None, help="transcripts root override (all agents)")
+    p_snap.add_argument("--agent", default="auto", help="which agent's transcripts to scan (default auto)")
+    p_snap.add_argument("--days", type=int, default=30, help="window in days (default 30, 0 = all)")
+    p_snap.add_argument("--horizon", type=int, default=7, help="headline survival horizon in days (default 7)")
+    p_snap.add_argument("--horizons", type=str, default="7,30", help="comma-separated survival horizons (default '7,30')")
+    p_snap.add_argument("--rework-days", type=int, default=14, help="M11 rework horizon in days (default 14)")
+    p_snap.add_argument("--settle-days", type=int, default=90, help="M12 settle horizon in days (default 90)")
+    p_snap.add_argument("--proximity-hours", type=int, default=24, help="attribution time window (default 24)")
+    p_snap.add_argument("--now", type=str, default=None, help="override 'now' as ISO-8601 (reproducible runs)")
     return parser
 
 
@@ -147,8 +186,12 @@ def main(argv: list[str] | None = None) -> int:
             return _run_audit(args)
         if args.command == "aidd":
             return _run_aidd(args)
+        if args.command == "snapshot":
+            return _run_snapshot(args)
         if args.command == "doctor":
             return _run_doctor(args)
+        if args.command == "export":
+            return _run_export(args)
     except (audit.AuditError, gitdata.GitError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
@@ -187,6 +230,8 @@ def _run_audit(args) -> int:
         raise audit.AuditError("--days must be >= 0 (0 disables the time window)")
     if args.rework_days < 0:
         raise audit.AuditError("--rework-days must be >= 0 (0 skips the M11 rework lens)")
+    if args.settle_days < 0:
+        raise audit.AuditError("--settle-days must be >= 0 (0 skips the M12 settle lens)")
     repo = Path(args.repo).expanduser().resolve()
     transcripts_root = args.transcripts_dir  # None = each agent's own root
     horizons = _parse_horizons(args.horizons)
@@ -206,6 +251,7 @@ def _run_audit(args) -> int:
         details=args.details,
         agents=agents,
         rework_days=args.rework_days,
+        settle_days=args.settle_days,
         use_cache=not args.no_cache,
         log=_stderr_logger,
     )
@@ -261,6 +307,70 @@ def _emit(report: dict, args) -> None:
         print(render_markdown(report))
     else:
         print(render_console(report))
+
+
+def _run_snapshot(args) -> int:
+    """Run the full pipeline once to warm the persistent cache, quietly.
+
+    Output is deterministic counts only — no wall clock, no metrics — so a
+    cron job's log stays diffable. Repeat audits with the same window
+    parameters are then served from the cache instead of re-blaming.
+    """
+    from . import cache
+
+    if args.days < 0:
+        raise audit.AuditError("--days must be >= 0 (0 disables the time window)")
+    repo = str(Path(args.repo).expanduser().resolve())
+    report = audit.run_audit(
+        repo=repo,
+        transcripts_root=args.transcripts_dir,
+        days=args.days,
+        horizons=_parse_horizons(args.horizons),
+        headline_horizon=args.horizon,
+        now=_resolve_now(args.now),
+        pricing_override=None,
+        proximity_hours=args.proximity_hours,
+        show_paths=False,
+        details=False,
+        agents=_resolve_agents(args.agent),
+        rework_days=args.rework_days,
+        settle_days=args.settle_days,
+        use_cache=True,
+        log=None,
+    )
+    entries = len(cache.load(repo))
+    print(f"snapshot ok: {report['input']['sessions']} sessions, {report['input']['commits_in_window']} commits scanned")
+    print(f"cache: {entries} immutable git-fact entries at {cache.cache_path(repo)}")
+    print("repeat audits with these window parameters skip the cached blame/tree work")
+    return 0
+
+
+def _run_export(args) -> int:
+    import json
+
+    from . import export
+
+    if not args.perfetto:
+        raise audit.AuditError("choose an export format: --perfetto")
+    if args.days < 0:
+        raise audit.AuditError("--days must be >= 0 (0 disables the time window)")
+    repo = str(Path(args.repo).expanduser().resolve())
+    sessions = transcripts.load_sessions(
+        repo,
+        args.transcripts_dir,
+        now=_resolve_now(args.now),
+        days=args.days,
+        agents=_resolve_agents(args.agent),
+        logger=_stderr_logger,
+    )
+    trace = export.sessions_to_perfetto(sessions)
+    args.out.write_text(json.dumps(trace, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
+    print(
+        f"exported {len(sessions)} session(s) -> "
+        f"{len(trace['traceEvents'])} trace event(s) -> {args.out}"
+    )
+    print("open https://ui.perfetto.dev and drag the file in (parsed locally, never uploaded)")
+    return 0
 
 
 def _parse_horizons(raw: str) -> tuple[int, ...]:

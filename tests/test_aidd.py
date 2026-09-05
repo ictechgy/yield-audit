@@ -2,8 +2,9 @@
 
 Timeline (conftest): before-period (window .. 2026-08-05T00:00Z) holds
 C1 (probable — session A ran it) and C2 (human); after-period
-(2026-08-05 .. now=08-20) holds C3 (certain footer) and C4 (human,
-reworks 6 of C3's 10 feature.md lines; C4 itself pending at 14d).
+(2026-08-05 .. now=08-20) holds C3 (certain footer), C4 (human,
+reworks 6 of C3's 10 feature.md lines; pending at 14d) and C5 (human
+fix commit reworking 2 of C4's lines; also pending at 14d).
 """
 
 from __future__ import annotations
@@ -40,7 +41,7 @@ def test_schema_and_windows(aidd):
     before, after = aidd["periods"]["before"], aidd["periods"]["after"]
     assert before["window_end"].startswith("2026-08-05")
     assert before["commits"] == 2  # C1, C2
-    assert after["commits"] == 2  # C3, C4
+    assert after["commits"] == 3  # C3, C4, C5
     assert before["sessions"] == 3  # all claude sessions end before the split
     assert after["sessions"] == 0
 
@@ -49,9 +50,9 @@ def test_cohort_tables(aidd):
     before, after = aidd["periods"]["before"], aidd["periods"]["after"]
     assert before["cohort_evidence"] == {"certain": 0, "probable": 1, "human": 1}
     assert before["cohorts"]["probable"]["reworked_lines"] == 11  # C1 golden
-    assert after["cohort_evidence"] == {"certain": 1, "probable": 0, "human": 1}
+    assert after["cohort_evidence"] == {"certain": 1, "probable": 0, "human": 2}
     assert after["cohorts"]["certain"]["rework_rate"] == pytest.approx(0.6)
-    assert after["cohorts"]["human"]["pending_commits"] == 1  # C4 horizon pending
+    assert after["cohorts"]["human"]["pending_commits"] == 2  # C4, C5 horizons pending
 
 
 def test_comparison_block(aidd):

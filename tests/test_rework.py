@@ -2,7 +2,8 @@
 
 Fixture timeline (conftest): C1 @08-01 (probable — session A ran it),
 C2 @08-04 human, C3 @08-05 certain (footer, feature.md 10 lines),
-C4 @08-09 human (rewrites 6 of those 10). Default now 2026-08-20:
+C4 @08-09 human (rewrites 6 of those 10), C5 @08-10 human fix commit
+(rewrites 2 of C4's lines; its own horizon is pending). Default now 2026-08-20:
 
 - C1: added 24, survived at 14d = 13 -> reworked 11 (rate 11/24)
 - C2: added 13, untouched -> reworked 0
@@ -28,7 +29,7 @@ def rework_env(fixture_env):
     commits = gitdata.commits_with_numstat(repo, since=None, until=None, warnings=warnings)
     messages = gitdata.commit_messages(repo, since=None, until=None)
     by_summary = {c.summary: c.sha for c in commits}
-    assert set(by_summary) == {"c1: initial work", "c2: follow-up", "c3: add feature notes", "c4: rework feature"}
+    assert set(by_summary) == {"c1: initial work", "c2: follow-up", "c3: add feature notes", "c4: rework feature", "fix: correct feature notes"}
     return {
         "repo": repo,
         "now": now,
@@ -68,7 +69,7 @@ def test_rework_golden_at_14d(rework_env):
     result = analyze_rework(
         rework_env["repo"], rework_env["commits"], labels, now=rework_env["now"], horizon_days=14
     )
-    assert result.evidence == {"certain": 1, "probable": 1, "human": 2}
+    assert result.evidence == {"certain": 1, "probable": 1, "human": 3}
 
     certain = result.cohorts["certain"]
     assert certain["added"] == 10 and certain["reworked"] == 6
@@ -82,7 +83,8 @@ def test_rework_golden_at_14d(rework_env):
     human = result.cohorts["human"]
     assert human["added"] == 13 and human["reworked"] == 0
     assert human["rate"] == 0.0
-    assert human["pending_commits"] == 1  # C4's horizon has not elapsed
+    # C4 and C5 horizons (08-23, 08-24) have not elapsed at now=08-20
+    assert human["pending_commits"] == 2
 
     combined = result.cohorts["ai_combined"]
     assert combined["added"] == 34 and combined["reworked"] == 17
