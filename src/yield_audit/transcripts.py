@@ -21,7 +21,9 @@ Schema grounding (observed 2026-09 across client versions 2.1.222–2.1.260):
 from __future__ import annotations
 
 import json
+import math
 import os
+import re
 from collections import defaultdict
 from pathlib import Path
 
@@ -46,17 +48,27 @@ def default_transcripts_root() -> Path:
     return Path.home() / ".claude" / "projects"
 
 
+def munged_project_dir_name(repo_real: str) -> str:
+    """Claude Code's project-dir name for a cwd: path separators (and the
+    Windows drive colon) replaced by ``-``. Producing a separator-free name
+    is also what keeps ``root / munged`` from resolving to an absolute path
+    on backslash platforms.
+    """
+    return re.sub(r"[/\\:]", "-", repo_real)
+
+
 def iter_transcript_files(root: Path, repo_real: str, logger=None) -> list[Path]:
     """Transcript files to scan, newest-layout first.
 
     Claude Code stores a project's sessions under a directory named after its
     cwd with separators replaced by ``-``. When that directory exists we scan
-    only it — a 100x+ shortcut over parsing every project's logs. Anything
-    unusual (missing dir, unusual layout) falls back to a full walk, which
-    follows symlinked directories (``Path.rglob`` does not).
+    only it — a 100x+ shortcut over parsing every project's logs (sessions
+    stored under other layouts, if any, are covered by the ``--transcripts-dir``
+    override). Anything unusual (missing dir, unusual layout) falls back to a
+    full walk, which follows symlinked directories but refuses to revisit one
+    it has already seen (symlink cycles).
     """
-    munged = repo_real.replace("/", "-")
-    candidate = root / munged
+    candidate = root / munged_project_dir_name(repo_real)
     if candidate.is_dir():
         files = sorted(candidate.glob("*.jsonl"))
         if logger:
@@ -71,7 +83,18 @@ def iter_transcript_files(root: Path, repo_real: str, logger=None) -> list[Path]
 
 def _walk_jsonl(root: Path) -> list[Path]:
     out: list[Path] = []
-    for dirpath, _dirnames, filenames in os.walk(root, followlinks=True):
+    seen: set[tuple[int, int]] = set()
+    for dirpath, dirnames, filenames in os.walk(root, followlinks=True):
+        try:
+            stat = os.stat(dirpath)
+            identity = (stat.st_dev, stat.st_ino)
+        except OSError:
+            identity = None
+        if identity is not None and identity in seen:
+            dirnames[:] = []  # symlink cycle: do not descend again
+            continue
+        if identity is not None:
+            seen.add(identity)
         for filename in filenames:
             if filename.endswith(".jsonl"):
                 out.append(Path(dirpath) / filename)
@@ -194,10 +217,14 @@ def _ingest_record(record: dict, path: Path, repo_real: str, sessions: dict[str,
 
 
 def _int(value) -> int:
-    """Token counts: ints pass; floats (some client versions) truncate; junk is 0."""
+    """Token counts: ints pass; floats (some client versions) truncate; junk is 0.
+
+    ``math.isfinite`` matters: Python's json parser accepts bare ``Infinity``,
+    and ``int(inf)`` would raise OverflowError past every guard.
+    """
     if isinstance(value, bool):
         return 0
-    if isinstance(value, (int, float)) and value >= 0:
+    if isinstance(value, (int, float)) and math.isfinite(value) and value >= 0:
         return int(value)
     return 0
 

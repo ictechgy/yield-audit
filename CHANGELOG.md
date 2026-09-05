@@ -4,6 +4,42 @@ All notable changes to yield-audit are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning is
 SemVer.
 
+## [0.1.2] - 2026-09-05
+
+Second review round: close the sanitizer bypasses found in v0.1.1's new
+output boundary and harden ingest against hostile transcript values.
+Measured values are unchanged (regression-checked against 0.1.1).
+
+### Fixed — security
+- Session ids are transcript-controlled and reached report keys/cells raw;
+  `_sid` now sanitizes, and `run_audit` deep-sanitizes the finished report
+  (strings and dict keys) so no future field can bypass the boundary.
+- Path redaction's lookbehind is ASCII-only: a Unicode word (e.g. Hangul)
+  before an absolute path no longer suppresses redaction.
+- `~/`-relative paths in commands are redacted to `<path>` like absolute
+  ones; Windows UNC free-text paths are a documented gap.
+- Sanitization now also strips C1 control characters (U+0080-U+009F) and
+  CSI sequences with intermediate bytes.
+
+### Fixed — robustness
+- Bare `Infinity` token counts (accepted by Python's json parser) crashed
+  the run with OverflowError; non-finite values now read as 0.
+- The Windows munged-directory name is separator/colon free, so the
+  prefilter can no longer resolve to an absolute path and scan the
+  repository itself instead of the transcripts.
+- Transcript discovery prunes symlink cycles by (device, inode) instead of
+  looping forever.
+- Blame porcelain parsing ignores tab-prefixed content lines whose first
+  token looks like a SHA.
+
+### Changed
+- Discovery notes (prefilter vs full walk) are surfaced in report notes
+  instead of being invisible.
+- Hygiene: pending count dedupes contested units by (commit, path);
+  survival result annotations reflect share-weighted floats; waste
+  classifies each unit once; dead attribution overlap field removed;
+  version strings aligned to 0.1.2.
+
 ## [0.1.1] - 2026-09-05
 
 Post-release review hardening: correctness, performance, and output-boundary

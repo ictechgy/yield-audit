@@ -142,6 +142,25 @@ def test_report_redacts_home_and_commands(report, fixture_env):
         assert not chain["command"].startswith("/")
 
 
+def test_report_has_no_escape_bytes_anywhere(report):
+    # deep-sanitize safety net: no transcript-derived string may carry
+    # control or escape bytes into any format
+    def walk(value):
+        if isinstance(value, str):
+            yield value
+        elif isinstance(value, dict):
+            for key, item in value.items():
+                yield from walk(key)
+                yield from walk(item)
+        elif isinstance(value, list):
+            for item in value:
+                yield from walk(item)
+
+    for text in walk(report):
+        assert "\x1b" not in text, repr(text)
+        assert "\x07" not in text, repr(text)
+
+
 def test_show_paths_flag_unredacts(report, fixture_env, capsys):
     code = main([*audit_argv(fixture_env), "--format", "json", "--details", "--show-paths"])
     assert code == 0

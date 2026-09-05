@@ -62,23 +62,23 @@ def analyze_waste(
     *classified at the same horizon* — using the headline-horizon aggregate
     instead would let pending-at-headline units push shares above 1.0.
     """
-    units_by_session: dict[str, list[SurvivalUnit]] = {}
+    units_by_session: dict[str, list[tuple[SurvivalUnit, str]]] = {}
     for unit in survival.units:
-        if classify_unit(unit, horizon) is not None:
-            units_by_session.setdefault(unit.session_id, []).append(unit)
+        cls = classify_unit(unit, horizon)  # classify once, reuse below
+        if cls is not None:
+            units_by_session.setdefault(unit.session_id, []).append((unit, cls))
 
     out: dict[str, WasteBound] = {}
     for session_id in sorted(units_by_session):
         session_units = units_by_session[session_id]
-        total_added = sum(u.attributed_added for u in session_units)
+        total_added = sum(u.attributed_added for u, _cls in session_units)
         if total_added <= 0:
             continue
         cost = session_costs.get(session_id, 0.0)
         lower = upper = 0.0
         removed = rewritten = edited = 0.0
         class_counts = {REMOVED: 0, REWRITTEN: 0, EDITED: 0}
-        for unit in session_units:
-            cls = classify_unit(unit, horizon)
+        for unit, cls in session_units:
             class_counts[cls] += 1
             effective = unit.attributed_added
             share = cost * (effective / total_added)

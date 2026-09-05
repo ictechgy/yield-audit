@@ -55,7 +55,7 @@ def attribute(
     commit_files = {c.sha: set(c.files) for c in commits}
     session_files = {s.session_id: set(s.edited_files) for s in sessions}
 
-    claims: dict[str, list[tuple[str, str, int, list[str]]]] = {}  # sha -> [(session_id, grade, overlap_n, shared_files)]
+    claims: dict[str, list[tuple[str, str, list[str]]]] = {}  # sha -> [(session_id, grade, shared_files)]
     for commit in commits:
         for session in sessions:
             edited = session_files[session.session_id]
@@ -70,7 +70,7 @@ def attribute(
                 continue
             grade = "high" if session.ran_git_commit else "medium"
             claims.setdefault(commit.sha, []).append(
-                (session.session_id, grade, len(overlap), sorted(overlap))
+                (session.session_id, grade, sorted(overlap))
             )
 
     pairs: list[Attribution] = []
@@ -79,17 +79,19 @@ def attribute(
         claim_list = claims.get(commit.sha, [])
         if not claim_list:
             continue
-        best_grade = min((g for _, g, _, _ in claim_list), key=GRADES.index)
+        best_grade = min((g for _, g, _ in claim_list), key=GRADES.index)
         # Every same-grade claimant keeps a stake, split evenly: dropping
         # lower-overlap claimants would silently erase their output from
-        # share-weighted aggregates downstream.
-        winners = [(sid, grade, ov, shared) for sid, grade, ov, shared in claim_list if grade == best_grade]
+        # share-weighted aggregates downstream. Overlap counts do not weigh
+        # the split — under v0.1 heuristics any weighting would be fake
+        # precision.
+        winners = [(sid, grade, shared) for sid, grade, shared in claim_list if grade == best_grade]
         winners.sort(key=lambda item: item[0])  # deterministic order
         share = 1.0
         if len(winners) > 1:
             ambiguous.append(commit.sha)
             share = 1.0 / len(winners)
-        for sid, grade, _ov, shared in winners:
+        for sid, grade, shared in winners:
             pairs.append(
                 Attribution(
                     session_id=sid,

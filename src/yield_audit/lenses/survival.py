@@ -65,10 +65,10 @@ class SurvivalUnit:
 class SurvivalResult:
     horizon: int
     units: list[SurvivalUnit]
-    pending_count: int
+    pending_count: int  # unique (commit, path) units pending at the headline horizon
     overall: float | None
-    overall_added: int
-    overall_survived: int
+    overall_added: float  # attribution-share weighted, hence float
+    overall_survived: float
     by_kind: dict[str, dict]  # kind -> {added, survived, rate}
     sessions: dict[str, dict]  # session_id -> {added, survived, rate, pending}
     notes: list[str]
@@ -149,6 +149,9 @@ def _aggregate(
 ) -> SurvivalResult:
     measured_units = [u for u in units if headline_horizon in u.survived]
     pending_units = [u for u in units if headline_horizon in u.pending_horizons]
+    # A contested commit contributes one unit per claimant; the pending count
+    # reports physical file-units, so dedupe by (commit, path).
+    pending_count = len({(u.commit_sha, u.path) for u in pending_units})
 
     # All aggregates are attribution-share weighted so a commit contested by
     # two sessions contributes each unit's share exactly once overall.
@@ -195,7 +198,7 @@ def _aggregate(
     return SurvivalResult(
         horizon=headline_horizon,
         units=units,
-        pending_count=len(pending_units),
+        pending_count=pending_count,
         overall=overall,
         overall_added=total_added,
         overall_survived=total_survived,

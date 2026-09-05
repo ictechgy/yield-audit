@@ -9,6 +9,8 @@ from pathlib import Path
 from yield_audit import transcripts
 from yield_audit.events import normalize_command, parse_iso8601
 
+Infinity = float("inf")
+
 
 def test_load_fixture_sessions(fixture_env):
     sessions = transcripts.load_sessions(
@@ -136,6 +138,31 @@ def test_float_usage_tokens_are_truncated_not_zeroed(tmp_path):
     sessions = transcripts.load_sessions(str(tmp_path), root, now=parse_iso8601("2026-08-02T00:00:00Z"), days=1)
     call = sessions[0].api_calls[0]
     assert (call.input_tokens, call.output_tokens, call.cache_read_tokens) == (100, 20, 300)
+
+
+def test_infinite_usage_tokens_do_not_crash(tmp_path):
+    # Python's json accepts bare Infinity; int(inf) must never be attempted.
+    root = tmp_path / "transcripts"
+    root.mkdir()
+    line = json.dumps({
+        "type": "assistant",
+        "sessionId": "sid-inf",
+        "timestamp": "2026-08-01T10:00:00Z",
+        "cwd": str(tmp_path),
+        "message": {"role": "assistant", "model": "m", "content": [],
+                    "usage": {"output_tokens": Infinity}},
+    }).replace('"Infinity"', "Infinity")  # bare token, as a hostile file would have
+    (root / "inf.jsonl").write_text(line + "\n", encoding="utf-8")
+    sessions = transcripts.load_sessions(str(tmp_path), root, now=parse_iso8601("2026-08-02T00:00:00Z"), days=1)
+    assert sessions[0].api_calls[0].output_tokens == 0
+
+
+def test_munged_name_is_separator_free_even_on_windows_paths():
+    name = transcripts.munged_project_dir_name("C:\\Users\\me\\repo")
+    assert "/" not in name and "\\" not in name and ":" not in name
+    assert name == "C--Users-me-repo"
+    # POSIX layout unchanged
+    assert transcripts.munged_project_dir_name("/Users/me/repo") == "-Users-me-repo"
 
 
 def test_munged_directory_prefilter_and_fallback(tmp_path):

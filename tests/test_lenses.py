@@ -172,6 +172,35 @@ def test_survival_unit_classification_thresholds():
     assert classify_unit(unit_pending, 7) is None
 
 
+def test_blame_porcelain_parser_ignores_content_and_metadata_lines():
+    from yield_audit.gitdata import counts_from_porcelain
+
+    sha = "a" * 40
+    other = "b" * 40
+    lines = [
+        f"{sha} 1 1 1\n",
+        "\tb1b2c3d4 " + sha + " trailing hex-looking content\n",  # content line: not counted
+        f"previous {other} old_name.py\n",  # metadata: first token is not hex
+        "boundary\n",
+        f"{sha} 2 2 1\n",
+        f"{other} 3 3 1\n",
+    ]
+    counts = counts_from_porcelain(lines)
+    assert counts == {sha: 2, other: 1}
+
+
+def test_pending_count_dedupes_contested_units():
+    from yield_audit.lenses.survival import SurvivalUnit, _aggregate
+
+    def pending_unit(sid):
+        return SurvivalUnit(sid, "c", "same.py", "source", added=5,
+                            share=0.5, pending_horizons=[7])
+
+    units = [pending_unit("s1"), pending_unit("s2")]  # one physical file, two claimants
+    result = _aggregate(units, horizons=(7,), headline_horizon=7, notes=[])
+    assert result.pending_count == 1  # not 2
+
+
 def test_waste_denominator_matches_the_classified_horizon():
     # Unit is pending at the 7d headline but measured (fully removed) at 30d:
     # at horizon=30 its share must be computed against 30d-measured lines only,

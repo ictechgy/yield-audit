@@ -4,12 +4,32 @@ from __future__ import annotations
 
 from yield_audit.redact import (
     abbreviate_home,
+    deep_sanitize,
     markdown_cell,
     redact_absolute_paths,
     redact_path,
     sanitize_command,
     sanitize_text,
 )
+
+
+def test_deep_sanitize_reaches_strings_and_keys():
+    hostile = "\x1b]0;pwned\x07value"
+    report = {
+        "per_session": {hostile: {"rate": 0.5}},
+        "chains": [hostile, 42, None],
+        "nested": {"deep": [True, 1.5, hostile]},
+    }
+    clean = deep_sanitize(report)
+    flat = repr(clean)
+    assert "\x1b" not in flat and "\x07" not in flat
+    assert clean["chains"][1] == 42 and clean["chains"][2] is None  # non-strings untouched
+    assert list(clean["per_session"].keys()) == ["value"]  # dict keys sanitized too
+
+
+def test_deep_sanitize_is_idempotent():
+    value = {"a": ["ok", {"b": "fine"}]}
+    assert deep_sanitize(deep_sanitize(value)) == deep_sanitize(value)
 
 
 def test_sanitize_strips_ansi_and_control_characters():
@@ -32,6 +52,20 @@ def test_redact_absolute_paths_keeps_urls():
     assert "/Users/you" not in redacted
     assert "<path>" in redacted
     assert "https://example.com/a/b" in redacted  # URL must survive
+
+
+def test_redact_covers_unicode_prefix_and_home_paths():
+    # a Unicode word before a path must not suppress redaction (\w is unicode-aware)
+    text = "cat 경로/Users/jinhongan/secret/key.pem"
+    assert "Users/jinhongan" not in redact_absolute_paths(text)
+    # home-relative paths leak just as much as absolute ones
+    assert "secret" not in redact_absolute_paths("cat ~/.ssh/id_rsa && ls ~/.config/creds/token")
+
+
+def test_sanitize_strips_c1_controls_and_csi_intermediates():
+    assert "\x9b" not in sanitize_text("\x9b31mRED\x9b0m")
+    cleaned = sanitize_text("\x1b[0 qcursor")
+    assert "\x1b" not in cleaned
 
 
 def test_sanitize_command_gates_paths_on_show_paths():

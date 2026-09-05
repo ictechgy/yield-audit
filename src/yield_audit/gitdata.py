@@ -182,7 +182,6 @@ def blame_sha_counts(repo: str, ref: str, path: str) -> dict[str, int]:
     so the per-line list collapses to a counter — blame output for large
     files otherwise dominates memory (porcelain includes file content).
     """
-    counts: dict[str, int] = {}
     try:
         proc = subprocess.Popen(
             ["git", "-C", repo, "blame", "-l", "--porcelain", ref, "--", path],
@@ -197,12 +196,26 @@ def blame_sha_counts(repo: str, ref: str, path: str) -> dict[str, int]:
         raise GitError("git executable not found on PATH") from exc
     assert proc.stdout is not None
     with proc.stdout:
-        for line in proc.stdout:
-            first = line.split(" ", 1)[0].strip()
-            if len(first) >= 40 and set(first) <= _HEX:
-                counts[first] = counts.get(first, 0) + 1
+        counts = counts_from_porcelain(proc.stdout)
     if proc.wait() != 0:
         raise GitError(f"git blame {ref}:{path} failed with exit code {proc.returncode}")
+    return counts
+
+
+def counts_from_porcelain(lines) -> dict[str, int]:
+    """Count origin SHAs from ``git blame --porcelain`` output.
+
+    Only lines that *start* with a 40-hex token are line headers; content
+    lines (tab-prefixed) and metadata lines (``previous``, ``boundary``) must
+    not be counted even when their first token looks like a SHA.
+    """
+    counts: dict[str, int] = {}
+    for line in lines:
+        if not line or line.startswith("\t"):
+            continue
+        first = line.split(" ", 1)[0].strip()
+        if len(first) >= 40 and set(first) <= _HEX:
+            counts[first] = counts.get(first, 0) + 1
     return counts
 
 

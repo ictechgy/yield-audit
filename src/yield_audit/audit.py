@@ -52,9 +52,17 @@ def run_audit(
         horizons = (headline_horizon, *horizons)
 
     repo_real = transcripts.normalize_path(repo)
-    sessions = transcripts.load_sessions(
-        repo_real, transcripts_root, now=now, days=days, logger=log
-    )
+    log_messages: list[str] = []
+    if log is not None:
+        sessions = transcripts.load_sessions(
+            repo_real, transcripts_root, now=now, days=days,
+            logger=lambda m: (log_messages.append(m), log(m))[1],
+        )
+    else:
+        sessions = transcripts.load_sessions(
+            repo_real, transcripts_root, now=now, days=days,
+            logger=log_messages.append,
+        )
     transcripts.group_edit_files_by_repo(sessions, repo_real)
 
     since = now - timedelta(days=days) if days and days > 0 else None
@@ -143,9 +151,11 @@ def run_audit(
         "m4_accepted": _accepted_block(accepted),
         "m5_cache": _cache_block(cache_by_session),
         "m8_verify": _verify_block(verify),
-        "notes": _global_notes(pricing_notes) + git_warnings,
+        "notes": _global_notes(pricing_notes) + git_warnings + log_messages[:20],
     }
-    return report
+    # Defense in depth: nothing in the report bypasses the output boundary,
+    # even if a future field forgets to sanitize.
+    return redact.deep_sanitize(report)
 
 
 def _attribution_block(attributions) -> dict:
@@ -363,4 +373,6 @@ def _num(value):
 
 
 def _sid(session_id: str) -> str:
-    return session_id[:8]
+    # Session ids are transcript-controlled; they end up as dict keys and
+    # table cells, so they pass the same sanitization as everything else.
+    return redact.sanitize_text(session_id)[:8]
