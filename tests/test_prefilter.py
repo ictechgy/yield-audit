@@ -130,6 +130,10 @@ def test_path_touch_log_uses_committer_dates(tmp_path):
     _write(repo, "a.py", "a1\na2\na3\na4\n")
     env = dict(
         os.environ,
+        GIT_AUTHOR_NAME="Fixture",
+        GIT_AUTHOR_EMAIL="fixture@example.com",
+        GIT_COMMITTER_NAME="Fixture",
+        GIT_COMMITTER_EMAIL="fixture@example.com",
         GIT_AUTHOR_DATE="2026-07-01T10:00:00+00:00",
         GIT_COMMITTER_DATE="2026-08-05T10:00:00+00:00",
     )
