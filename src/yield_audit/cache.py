@@ -93,11 +93,14 @@ def save(repo_real: str, cache: dict) -> bool:
         # keep the file bounded: newest-first is not tracked (dicts are
         # insertion-ordered = roughly discovery order), so hard-truncate
         payload = dict(list(entries.items())[:_MAX_ENTRIES])
+        tmp_name = None
         with tempfile.NamedTemporaryFile(
             "w", encoding="utf-8", dir=target.parent, prefix="git-facts.", delete=False
         ) as handle:
             json.dump(payload, handle, separators=(",", ":"))
-            os.replace(handle.name, target)
+            tmp_name = handle.name
+        # rename only after close: Windows refuses to replace an open file
+        os.replace(tmp_name, target)
     except OSError:
         return False
     return True
