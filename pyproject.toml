@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "yield-audit"
-version = "0.3.2"
+version = "0.4.0"
 description = "Outcome accounting for AI coding agents: measure what survived, what it cost, and what was wasted — fully local."
 readme = "README.md"
 requires-python = ">=3.10"

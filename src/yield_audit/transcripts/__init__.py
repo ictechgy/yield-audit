@@ -69,15 +69,19 @@ def load_sessions(
     days: int,
     logger=None,
     agents=None,
+    since=None,
+    until=None,
 ) -> list[Session]:
     """Return sessions whose ``cwd`` matches ``repo``, ending within the last ``days``.
 
     ``agents`` selects which vendors to scan (default: all registered). Session
     ids are namespaced per vendor (``"<vendor>:<raw id>"``) so different vendors
-    never collide. Sidechain records (subagent transcripts) are excluded by the
-    Claude adapter: their API calls are billed under the parent conversation's
-    account but inflate per-session noise without changing commit attribution.
-    Set ``days`` <= 0 to disable the time filter.
+    never collide. ``since``/``until`` bound the window explicitly (period
+    splits); ``since`` also prunes date-partitioned layouts early. Sidechain
+    records (subagent transcripts) are excluded by the Claude adapter: their
+    API calls are billed under the parent conversation's account but inflate
+    per-session noise without changing commit attribution. Set ``days`` <= 0 to
+    disable the time filter.
     """
     repo_real = normalize_path(repo)
     cutoff = None
@@ -86,11 +90,12 @@ def load_sessions(
 
     agents = tuple(agents) if agents else DEFAULT_AGENTS
     roots = resolve_roots(agents, transcripts_root)
+    prune_since = since if since is not None else cutoff
 
     sessions: dict[str, Session] = {}
     for name in sorted(roots):
         adapter = ADAPTERS[name]
-        jsonl_files = adapter.iter_files(roots[name], repo_real, logger)
+        jsonl_files = adapter.iter_files(roots[name], repo_real, logger, since=prune_since)
         for jsonl in jsonl_files:
             try:
                 adapter.ingest_file(jsonl, repo_real, sessions)
@@ -105,6 +110,10 @@ def load_sessions(
         if session.cwd != repo_real:
             continue
         if cutoff is not None and session.end < cutoff:
+            continue
+        if since is not None and session.end < since:
+            continue
+        if until is not None and session.end > until:
             continue
         selected.append(session)
     selected.sort(key=lambda s: s.start)

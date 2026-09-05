@@ -29,13 +29,50 @@ from __future__ import annotations
 
 import json
 import re
+from datetime import date
 from pathlib import Path
 
 from ..events import ApiCall, Session, ToolResult, ToolUse, parse_iso8601
-from .base import TranscriptAdapter, _int
+from .base import TranscriptAdapter, _int, normalize_path
 
 SHELL_TOOLS = {"shell", "local_shell", "exec_command"}
 PATCH_FILE_RE = re.compile(r"^\*\*\* (?:Add|Update|Delete) File: (.+)$", re.MULTILINE)
+
+
+def _date_pruned_files(root: Path, since) -> list[Path] | None:
+    """``*.jsonl`` under valid ``YYYY/MM/DD`` day-directories at/after
+    ``since.date()``. ``None`` means the root doesn't follow the date
+    layout (no valid date directory at all) — caller falls back to a
+    full walk. An empty list means the layout exists but every day is
+    older than the window.
+    """
+    out: list[Path] = []
+    saw_date_dir = False
+    try:
+        year_dirs = [p for p in root.iterdir() if p.is_dir() and len(p.name) == 4 and p.name.isdigit()]
+    except OSError:
+        return None
+    for year in sorted(year_dirs):
+        for month in sorted(p for p in _safe_iterdir(year) if p.is_dir() and len(p.name) == 2 and p.name.isdigit()):
+            for day in sorted(
+                p for p in _safe_iterdir(month) if p.is_dir() and len(p.name) == 2 and p.name.isdigit()
+            ):
+                try:
+                    dir_date = date(int(year.name), int(month.name), int(day.name))
+                except ValueError:
+                    continue
+                saw_date_dir = True
+                if dir_date < since.date():
+                    continue
+                out.extend(sorted(day.glob("*.jsonl")))
+    return out if saw_date_dir else None
+
+
+def _safe_iterdir(path: Path) -> list[Path]:
+    try:
+        return list(path.iterdir())
+    except OSError:
+        return []
 
 
 class CodexAdapter(TranscriptAdapter):
@@ -44,9 +81,25 @@ class CodexAdapter(TranscriptAdapter):
     def default_root(self) -> Path:
         return Path.home() / ".codex" / "sessions"
 
+    def iter_files(self, root: Path, repo_real: str, logger=None, since=None) -> list[Path]:
+        """Prune the date-partitioned layout (``YYYY/MM/DD``) by window start.
+
+        Codex stores sessions under ``sessions/<year>/<month>/<day>/``; when
+        that layout is present, day-directories older than ``since`` are
+        skipped without even listing them. Roots that don't follow the
+        layout fall back to the base full walk.
+        """
+        if since is not None:
+            files = _date_pruned_files(root, since)
+            if files is not None:
+                if logger:
+                    logger(f"[{self.name}] scanning {root} pruned to >= {since.date().isoformat()} ({len(files)} files)")
+                return files
+        return super().iter_files(root, repo_real, logger, since)
+
     def handle_record(
         self, record: dict, ctx: dict, path: Path, repo_real: str, sessions: dict[str, Session]
-    ) -> None:
+    ) -> None | bool:
         payload = record.get("payload")
         if not isinstance(payload, dict):
             return
@@ -62,6 +115,11 @@ class CodexAdapter(TranscriptAdapter):
             cwd = payload.get("cwd")
             if isinstance(cwd, str) and cwd:
                 ctx["cwd"] = cwd
+            # session_meta opens every rollout file; once its cwd provably
+            # points elsewhere, the whole file is another project's — stop.
+            known_cwd = ctx.get("cwd")
+            if isinstance(known_cwd, str) and normalize_path(known_cwd) != repo_real:
+                return False
             return
         if rtype == "turn_context":
             cwd = payload.get("cwd")

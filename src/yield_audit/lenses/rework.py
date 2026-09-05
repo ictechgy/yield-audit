@@ -66,6 +66,7 @@ def analyze_rework(
     notes = [
         "rework = lines the commit added that are no longer present verbatim at the horizon snapshot (git blame); renames/copies not followed",
         "cohort labels are evidence grades, not authorship verdicts: certain = AI footer in message, probable = agent session joined by time window + edited files, human = neither",
+        "zero-addition commits (merges, empty changesets) carry no measurable lines and are excluded from cohort counts entirely",
     ]
     if horizon_days <= 0:
         notes.append("disabled: rework horizon <= 0")
@@ -79,10 +80,14 @@ def analyze_rework(
 
     for commit in sorted(commits, key=lambda c: c.sha):
         label, evidence_text = labels.get(commit.sha, (HUMAN, "no_ai_evidence"))
+        total_added = sum(commit.files.values())
+        if total_added <= 0:
+            # Merge commits and empty changesets carry no measurable lines;
+            # counting them anywhere would only inflate pending.
+            continue
         bucket = cohorts[label]
         bucket["commits"] += 1
         evidence[label] = evidence.get(label, 0) + 1
-        total_added = sum(commit.files.values())
         row = {
             "commit": commit.sha,
             "label": label,
@@ -93,34 +98,33 @@ def analyze_rework(
         }
 
         reworked = 0
-        pending = total_added <= 0
-        if total_added > 0:
-            target = commit.date + timedelta(days=horizon_days)
-            if target > now:
-                pending = True
-            elif all(
-                _untouched_between(touches, merges, commit, path, target)
-                for path, added in commit.files.items()
-                if added > 0
-            ):
-                # No commit (and no merge) changed any of the commit's
-                # paths inside the window: nothing can have been reworked,
-                # provable without a single blame process.
-                pass
-            else:
-                ref = _snapshot(repo, target, cache)
-                tree = _tree(repo, ref, cache)
-                for path, added in sorted(commit.files.items()):
-                    if added <= 0:
-                        continue
-                    if path not in tree:  # file deleted since: everything reworked
-                        reworked += added
-                        continue
-                    key = (ref, path)
-                    if key not in cache:
-                        cache[key] = blame_sha_counts(repo, ref, path)
-                    survived = cache[key].get(commit.sha, 0)
-                    reworked += max(0, added - survived)
+        pending = False
+        target = commit.date + timedelta(days=horizon_days)
+        if target > now:
+            pending = True
+        elif all(
+            _untouched_between(touches, merges, commit, path, target)
+            for path, added in commit.files.items()
+            if added > 0
+        ):
+            # No commit (and no merge) changed any of the commit's
+            # paths inside the window: nothing can have been reworked,
+            # provable without a single blame process.
+            pass
+        else:
+            ref = _snapshot(repo, target, cache)
+            tree = _tree(repo, ref, cache)
+            for path, added in sorted(commit.files.items()):
+                if added <= 0:
+                    continue
+                if path not in tree:  # file deleted since: everything reworked
+                    reworked += added
+                    continue
+                key = (ref, path)
+                if key not in cache:
+                    cache[key] = blame_sha_counts(repo, ref, path)
+                survived = cache[key].get(commit.sha, 0)
+                reworked += max(0, added - survived)
 
         if pending:
             bucket["pending_commits"] += 1

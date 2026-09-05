@@ -42,6 +42,13 @@ from pathlib import Path
 
 import pytest
 
+
+@pytest.fixture(autouse=True)
+def _isolated_cache(tmp_path, monkeypatch):
+    """Never let tests touch the user's real ~/.cache/yield-audit."""
+    monkeypatch.setenv("YIELD_AUDIT_CACHE_DIR", str(tmp_path / "yield-audit-cache"))
+    return tmp_path / "yield-audit-cache"
+
 REPO_CWD = None  # set by fixture (realpath of the repo)
 NOW = "2026-08-20T00:00:00Z"
 

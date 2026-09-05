@@ -36,7 +36,7 @@ class ClaudeAdapter(TranscriptAdapter):
     def default_root(self) -> Path:
         return Path.home() / ".claude" / "projects"
 
-    def iter_files(self, root: Path, repo_real: str, logger=None) -> list[Path]:
+    def iter_files(self, root: Path, repo_real: str, logger=None, since=None) -> list[Path]:
         """Transcript files to scan, newest-layout first.
 
         Claude Code stores a project's sessions under a directory named after its
@@ -53,7 +53,7 @@ class ClaudeAdapter(TranscriptAdapter):
                 logger(f"prefilter: scanning munged project dir {candidate.name} ({len(files)} files)")
             if files:
                 return files
-        return super().iter_files(root, repo_real, logger)
+        return super().iter_files(root, repo_real, logger, since)
 
     def handle_record(
         self, record: dict, ctx: dict, path: Path, repo_real: str, sessions: dict[str, Session]

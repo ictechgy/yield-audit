@@ -235,5 +235,104 @@ def render_markdown(report: dict) -> str:
     return "\n".join(lines)
 
 
+def render_aidd_console(aidd: dict) -> str:
+    lines: list[str] = []
+    add = lines.append
+    params = aidd["parameters"]
+    comp = aidd["comparison"]
+
+    add(f"aidd report {aidd['schema_version']}")
+    add(f"repo: {params['repo']}")
+    add(
+        f"transition split: {params['split']} | lookback {params['period_lookback_days']}d per period "
+        f"| rework horizon {params['rework_horizon_days']}d | generated: {aidd['generated_at']}"
+    )
+    add("")
+    for key in ("before", "after"):
+        period = aidd["periods"][key]
+        add(
+            f"[{key}] {period['window_start']} .. {period['window_end'] or 'now'}: "
+            f"{period['sessions']} sessions, {period['commits']} commits "
+            f"({period['attributed_commits']} attributed), ${period['session_cost_usd']:.2f} agent spend, "
+            f"survival {pct(period['survival_rate'])}"
+        )
+    add("")
+    add("== AI rework by cohort (evidence-graded, not verdicts) ==")
+    for key in ("before", "after"):
+        period = aidd["periods"][key]
+        add(f"-- {key} --")
+        for label in ("certain", "probable", "human", "ai_combined"):
+            info = period["cohorts"].get(label)
+            if info and info["commits"]:
+                add(
+                    f"  {label:12} {pct(info['rework_rate']):>7}  "
+                    f"({info['reworked_lines']}/{info['added_lines']} lines, {info['pending_commits']} pending)"
+                )
+        evidence = ", ".join(f"{k}={v}" for k, v in period["cohort_evidence"].items())
+        add(f"  evidence: {evidence}")
+    add("")
+    add("== comparison ==")
+    add(f"AI rework rate: {pct(comp['ai_rework_rate']['before'])} -> {pct(comp['ai_rework_rate']['after'])}")
+    add(f"human rework rate: {pct(comp['human_rework_rate']['before'])} -> {pct(comp['human_rework_rate']['after'])}")
+    add(f"AI vs human ratio: {comp['ai_vs_human_rework_ratio']['before']} -> {comp['ai_vs_human_rework_ratio']['after']}")
+    add("")
+    add("-- notes --")
+    for note in aidd["notes"]:
+        add(f"  {note}")
+    return "\n".join(lines)
+
+
+def render_aidd_markdown(aidd: dict) -> str:
+    lines: list[str] = []
+    add = lines.append
+    params = aidd["parameters"]
+    comp = aidd["comparison"]
+
+    add("# yield-audit aidd report")
+    add("")
+    add(f"- repo: `{params['repo']}`")
+    add(f"- transition split: `{params['split']}`, lookback {params['period_lookback_days']}d per period, rework horizon {params['rework_horizon_days']}d")
+    add(f"- generated: {aidd['generated_at']}")
+    add("")
+    add("| period | window | sessions | commits | attributed | agent spend | survival |")
+    add("|---|---|---|---|---|---|---|")
+    for key in ("before", "after"):
+        p = aidd["periods"][key]
+        add(
+            f"| {key} | {p['window_start']} .. {p['window_end'] or 'now'} | {p['sessions']} | {p['commits']} "
+            f"| {p['attributed_commits']} | ${p['session_cost_usd']:.2f} | {pct(p['survival_rate'])} |"
+        )
+    add("")
+    for key in ("before", "after"):
+        p = aidd["periods"][key]
+        add(f"## {key}: AI rework by cohort")
+        add("")
+        add("| cohort | rework rate | lines | pending |")
+        add("|---|---|---|---|")
+        for label in ("certain", "probable", "human", "ai_combined"):
+            info = p["cohorts"].get(label)
+            if info and info["commits"]:
+                add(f"| {label} | {pct(info['rework_rate'])} | {info['reworked_lines']}/{info['added_lines']} | {info['pending_commits']} |")
+        evidence = ", ".join(f"{k}={v}" for k, v in p["cohort_evidence"].items())
+        add(f"\n_Cohort evidence: {evidence}._")
+        add("")
+    add("## comparison")
+    add("")
+    add("| metric | before | after |")
+    add("|---|---|---|")
+    add(f"| AI rework rate | {pct(comp['ai_rework_rate']['before'])} | {pct(comp['ai_rework_rate']['after'])} |")
+    add(f"| human rework rate | {pct(comp['human_rework_rate']['before'])} | {pct(comp['human_rework_rate']['after'])} |")
+    ratio = comp["ai_vs_human_rework_ratio"]
+    add(f"| AI vs human ratio | {ratio['before'] if ratio['before'] is not None else 'n/a'} | {ratio['after'] if ratio['after'] is not None else 'n/a'} |")
+    add(f"| survival rate | {pct(comp['survival_rate']['before'])} | {pct(comp['survival_rate']['after'])} |")
+    add("")
+    add("## notes")
+    add("")
+    for note in aidd["notes"]:
+        add(f"- {note}")
+    add("")
+    return "\n".join(lines)
+
+
 def pct(value) -> str:
     return "n/a" if value is None else f"{value * 100:.1f}%"

@@ -317,4 +317,5 @@ def test_doctor_reports_environment(fixture_env, capsys):
     out = capsys.readouterr().out
     assert code == 0
     assert "git on PATH: True" in out
-    assert "sessions with cwd == repo: 3" in out
+    assert "sessions with cwd == repo (all agents): 3" in out
+    assert "agent claude: sessions with cwd == repo: 3" in out

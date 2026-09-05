@@ -1,6 +1,8 @@
 """``yield-audit`` command line interface.
 
 ``audit``  — run the pipeline against a git repository and print/write a report.
+``aidd``   — AI-transition cohort comparison: two windows split at a transition
+             date, AI-vs-human rework rates per period.
 ``doctor`` — check the environment (git, transcripts, session discovery) without
              computing any metrics.
 
@@ -16,7 +18,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from . import __version__, audit, gitdata, transcripts
-from .report import render_console, render_markdown
+from . import aidd as aidd_mod
+from .report import render_aidd_console, render_aidd_markdown, render_console, render_markdown
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -47,7 +50,15 @@ def _build_parser() -> argparse.ArgumentParser:
         help=f"which agent's transcripts to scan: auto ({', '.join(transcripts.DEFAULT_AGENTS)}), "
         "or one vendor's name (default auto)",
     )
-    p_audit.add_argument("--days", type=int, default=30, help="session/commit window in days (default 30, 0 = all)")
+    p_audit.add_argument(
+        "--days",
+        type=int,
+        default=30,
+        help=(
+            "window in days for sessions AND commits (default 30, 0 = all); "
+            "the M11 probable cohort exists only where an agent session falls inside this window"
+        ),
+    )
     p_audit.add_argument(
         "--horizon",
         type=int,
@@ -58,7 +69,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--horizons",
         type=str,
         default="7,30",
-        help="comma-separated horizons to measure (default '7,30')",
+        help="M1 survival snapshot horizons in days, comma-separated (default '7,30') — independent of --days",
     )
     p_audit.add_argument("--pricing-file", type=Path, default=None, help="JSON price overrides (USD per MTok)")
     p_audit.add_argument(
@@ -72,6 +83,11 @@ def _build_parser() -> argparse.ArgumentParser:
         type=int,
         default=14,
         help="rework horizon for the M11 cohort lens in days (default 14, 0 = skip)",
+    )
+    p_audit.add_argument(
+        "--no-cache",
+        action="store_true",
+        help="skip the persistent blame/tree cache (~/.cache/yield-audit; content-addressed by git SHA, never affects output)",
     )
     p_audit.add_argument(
         "--format",
@@ -88,6 +104,28 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         help="override 'now' as ISO-8601 (for reproducible runs); defaults to the current time",
     )
+
+    p_aidd = sub.add_parser(
+        "aidd",
+        help="AI-transition cohort comparison: two windows split at a transition date",
+    )
+    p_aidd.add_argument("--repo", required=True, help="path to the git repository to audit")
+    p_aidd.add_argument("--split", type=str, required=True, help="transition date, ISO-8601 (e.g. 2026-03-01)")
+    p_aidd.add_argument("--days", type=int, default=90, help="per-period lookback in days (default 90)")
+    p_aidd.add_argument("--transcripts-dir", type=Path, default=None, help="transcripts root override (all agents)")
+    p_aidd.add_argument("--agent", default="auto", help="which agent's transcripts to scan (default auto)")
+    p_aidd.add_argument("--rework-days", type=int, default=14, help="rework horizon in days (default 14)")
+    p_aidd.add_argument("--pricing-file", type=Path, default=None, help="JSON price overrides (USD per MTok)")
+    p_aidd.add_argument("--proximity-hours", type=int, default=24, help="attribution time window (default 24)")
+    p_aidd.add_argument("--no-cache", action="store_true", help="skip the persistent blame/tree cache")
+    p_aidd.add_argument(
+        "--format",
+        choices=("console", "json", "markdown"),
+        default="console",
+        help="report format (default console)",
+    )
+    p_aidd.add_argument("--out", type=Path, default=None, help="also write the JSON report to this path")
+    p_aidd.add_argument("--now", type=str, default=None, help="override 'now' as ISO-8601 (reproducible runs)")
 
     p_doctor = sub.add_parser("doctor", help="check environment and session discovery")
     p_doctor.add_argument("--repo", default=None, help="optionally verify sessions exist for this repository")
@@ -107,6 +145,8 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.command == "audit":
             return _run_audit(args)
+        if args.command == "aidd":
+            return _run_aidd(args)
         if args.command == "doctor":
             return _run_doctor(args)
     except (audit.AuditError, gitdata.GitError) as exc:
@@ -137,6 +177,11 @@ def _resolve_agents(raw: str) -> tuple[str, ...]:
     )
 
 
+def _stderr_logger(message: str):
+    # progress goes to stderr so report stdout stays machine-parseable
+    print(message, file=sys.stderr)
+
+
 def _run_audit(args) -> int:
     if args.days < 0:
         raise audit.AuditError("--days must be >= 0 (0 disables the time window)")
@@ -161,18 +206,61 @@ def _run_audit(args) -> int:
         details=args.details,
         agents=agents,
         rework_days=args.rework_days,
+        use_cache=not args.no_cache,
+        log=_stderr_logger,
     )
+    _emit(report, args)
+    return 0
 
+
+def _run_aidd(args) -> int:
+    repo = Path(args.repo).expanduser().resolve()
+    now = _resolve_now(args.now)
+    from .events import parse_iso8601
+
+    split = parse_iso8601(args.split)
+    if split is None:
+        raise audit.AuditError(f"--split is not a valid ISO-8601 date: {args.split!r}")
+    if args.days <= 0:
+        raise audit.AuditError("--days must be > 0 (per-period lookback)")
+    if args.rework_days <= 0:
+        raise audit.AuditError("--rework-days must be > 0 for aidd")
+
+    report = aidd_mod.run_aidd(
+        repo=str(repo),
+        transcripts_root=args.transcripts_dir,
+        split=split,
+        days=args.days,
+        now=now,
+        horizons=(7, 30),
+        headline_horizon=7,
+        pricing_override=str(args.pricing_file) if args.pricing_file else None,
+        proximity_hours=args.proximity_hours,
+        rework_days=args.rework_days,
+        agents=_resolve_agents(args.agent),
+        use_cache=not args.no_cache,
+        log=_stderr_logger,
+    )
     if args.out is not None:
         args.out.write_text(json.dumps(report, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    if args.format == "json":
+        print(json.dumps(report, indent=2, ensure_ascii=False))
+    elif args.format == "markdown":
+        print(render_aidd_markdown(report))
+    else:
+        print(render_aidd_console(report))
+    return 0
 
+
+def _emit(report: dict, args) -> None:
+    if args.out is not None:
+        args.out.write_text(json.dumps(report, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     if args.format == "json":
         print(json.dumps(report, indent=2, ensure_ascii=False))
     elif args.format == "markdown":
         print(render_markdown(report))
     else:
         print(render_console(report))
-    return 0
 
 
 def _parse_horizons(raw: str) -> tuple[int, ...]:
@@ -208,16 +296,21 @@ def _run_doctor(args) -> int:
             checks.append((False, f"agent {name}: transcripts root not found ({transcripts.ADAPTERS[name].default_root()})"))
             continue
         jsonls = list(root.rglob("*.jsonl"))
-        checks.append((bool(jsonls), f"agent {name}: transcripts root {root} ({len(jsonls)} jsonl files)"))
+        size_mb = sum(f.stat().st_size for f in jsonls if f.is_file()) / 1_000_000
+        checks.append(
+            (bool(jsonls), f"agent {name}: transcripts root {root} ({len(jsonls)} jsonl files, {size_mb:.1f} MB)")
+        )
 
     total_sessions = 0
     if args.repo:
         repo = str(Path(args.repo).expanduser().resolve())
-        sessions = transcripts.load_sessions(
-            repo, args.transcripts_dir, now=datetime.now(timezone.utc), days=0, agents=agents
-        )
-        total_sessions = len(sessions)
-        checks.append((total_sessions > 0, f"sessions with cwd == repo: {total_sessions}"))
+        for name in sorted(agents):
+            agent_sessions = transcripts.load_sessions(
+                repo, args.transcripts_dir, now=datetime.now(timezone.utc), days=0, agents=(name,)
+            )
+            checks.append((True, f"agent {name}: sessions with cwd == repo: {len(agent_sessions)}"))
+            total_sessions += len(agent_sessions)
+        checks.append((total_sessions > 0, f"sessions with cwd == repo (all agents): {total_sessions}"))
         if not gitdata.is_git_repo(repo):
             checks.append((False, f"not a git repository: {repo}"))
 

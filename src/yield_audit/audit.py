@@ -14,7 +14,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from . import cohorts, gitdata, redact, transcripts
+from . import cache, cohorts, gitdata, redact, transcripts
 from .attribute import attribute as attribute_fn
 from .costs import session_cost
 from .lenses.accepted import analyze_accepted
@@ -47,6 +47,9 @@ def run_audit(
     details: bool,
     agents=None,
     rework_days: int = 14,
+    since: datetime | None = None,
+    until: datetime | None = None,
+    use_cache: bool = True,
     log=None,
 ) -> dict:
     if not gitdata.is_git_repo(repo):
@@ -72,12 +75,12 @@ def run_audit(
         log_messages.append(f"agent {name}: transcripts root not found, skipped")
     if log is not None:
         sessions = transcripts.load_sessions(
-            repo_real, transcripts_root, now=now, days=days, agents=agents,
+            repo_real, transcripts_root, now=now, days=days, agents=agents, since=since, until=until,
             logger=lambda m: (log_messages.append(m), log(m))[1],
         )
     else:
         sessions = transcripts.load_sessions(
-            repo_real, transcripts_root, now=now, days=days, agents=agents,
+            repo_real, transcripts_root, now=now, days=days, agents=agents, since=since, until=until,
             logger=log_messages.append,
         )
     if not sessions:
@@ -87,9 +90,10 @@ def run_audit(
         )
     transcripts.group_edit_files_by_repo(sessions, repo_real)
 
-    since = now - timedelta(days=days) if days and days > 0 else None
+    # An explicit `since` (the aidd period split) overrides the days window.
+    window_since = since if since is not None else (now - timedelta(days=days) if days and days > 0 else None)
     git_warnings: list[str] = []
-    commits = gitdata.commits_with_numstat(repo_real, since=since, until=None, warnings=git_warnings)
+    commits = gitdata.commits_with_numstat(repo_real, since=window_since, until=until, warnings=git_warnings)
     commits_by_sha = {c.sha: c for c in commits}
 
     attributions = attribute_fn(
@@ -98,7 +102,7 @@ def run_audit(
         proximity=timedelta(hours=proximity_hours),
     )
 
-    messages = gitdata.commit_messages(repo_real, since=since, until=None)
+    messages = gitdata.commit_messages(repo_real, since=window_since, until=until)
     cohort_labels = cohorts.label_commits(messages, attributions.claimed_shas)
 
     table, fallback, pricing_notes = load_pricing(pricing_override)
@@ -115,8 +119,9 @@ def run_audit(
 
     # One shared cache across lenses: blame/snapshot results plus the
     # single touch-map pass that lets both skip blaming files no commit
-    # touched inside the measurement window.
-    blame_cache: dict = {}
+    # touched inside the measurement window. Seeded from the persistent
+    # content-addressed store when enabled (immutable git facts only).
+    blame_cache: dict = cache.load(repo_real) if use_cache else {}
     survival = analyze_survival(
         repo_real,
         attributions,
@@ -125,7 +130,7 @@ def run_audit(
         horizons=horizons,
         headline_horizon=headline_horizon,
         blame_cache=blame_cache,
-        touch_since=since,
+        touch_since=window_since,
     )
     waste = analyze_waste(survival, {sid: c["cost_usd"] for sid, c in session_costs.items()}, headline_horizon)
 
@@ -157,7 +162,7 @@ def run_audit(
         now=now,
         horizon_days=rework_days,
         blame_cache=blame_cache,
-        touch_since=since,
+        touch_since=window_since,
     )
 
     unknown_models: set[str] = set()
@@ -179,6 +184,9 @@ def run_audit(
             },
             "attribution_proximity_hours": proximity_hours,
             "rework_horizon_days": rework_days,
+            "window_start": window_since.isoformat() if window_since else None,
+            "window_end": until.isoformat() if until else None,
+            "cache": "on" if use_cache else "off",
             "pricing_source": "builtin_2026-09" if not pricing_override else str(pricing_override),
         },
         "input": {
@@ -200,6 +208,8 @@ def run_audit(
         "m11_rework": _rework_block(rework, details),
         "notes": _global_notes(pricing_notes) + git_warnings + log_messages[:20],
     }
+    if use_cache:
+        cache.save(repo_real, blame_cache)
     # Defense in depth: nothing in the report bypasses the output boundary,
     # even if a future field forgets to sanitize.
     return redact.deep_sanitize(report)

@@ -4,6 +4,36 @@ All notable changes to yield-audit are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning is
 SemVer.
 
+## [0.4.0] - 2026-09-06
+
+The AIDD transition report plus performance infrastructure from the
+v0.3 review's remaining items.
+
+### Added
+- `aidd` subcommand: AI-transition cohort comparison — two windows split
+  at a rollout date (`--split`, per-period lookback `--days`), rendering
+  AI-vs-human rework cohorts per period (evidence distributions
+  attached), agent spend, and survival side by side in console/markdown/
+  JSON (`yieldaudit.aidd.v1`). `audit`/`load_sessions` gained explicit
+  `since`/`until` window bounds to express the split.
+- Persistent content-addressed cache (`cache.py`): blame counts and tree
+  listings are immutable per git SHA, so repeats reuse them from
+  `~/.cache/yield-audit` (`--no-cache` opts out, `YIELD_AUDIT_CACHE_DIR`
+  relocates). Output-identical by construction; snapshots and the touch
+  map are deliberately not cached.
+- Codex adapter pruning: date-partitioned `~/.codex/sessions/YYYY/MM/DD`
+  day-directories older than the window are never listed, and a rollout
+  file whose `session_meta` declares another project's cwd is abandoned
+  at that first record (adapter `handle_record` may now stop the file).
+- doctor: per-agent session counts and transcript-root sizes; audit
+  progress now streams to stderr (stdout stays machine-parseable).
+
+### Changed
+- M11 excludes zero-addition commits (merges) from cohort counts — they
+  carried no measurable lines and inflated the pending tally.
+- README (en/ko): time-windows reference table (`--days`/`--horizons`/
+  `--rework-days`/`--proximity-hours` interplay) and the aidd quickstart.
+
 ## [0.3.2] - 2026-09-06
 
 Distribution release: published to PyPI via trusted publishing (OIDC —

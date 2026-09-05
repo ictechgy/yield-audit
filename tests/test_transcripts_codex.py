@@ -84,7 +84,6 @@ def test_codex_error_outputs_and_junk_records_are_skipped(fixture_env, tmp_path)
     records = [
         "{not json",
         json.dumps({"timestamp": "2026-08-05T11:00:00Z", "type": "event_msg", "payload": {}}),
-        codex_meta("2026-08-05T11:00:00Z", "/somewhere/else"),  # wrong cwd -> session never created
         codex_meta("2026-08-05T11:00:05Z", fixture_env["repo_cwd"]),
         codex_turn_context("2026-08-05T11:00:06Z", fixture_env["repo_cwd"]),
         codex_token_count("2026-08-05T11:00:30Z", {"input_tokens": "junk", "output_tokens": -5}),
@@ -93,6 +92,13 @@ def test_codex_error_outputs_and_junk_records_are_skipped(fixture_env, tmp_path)
     ]
     (root / "rollout-x.jsonl").write_text(
         records[0] + "\n" + "".join(json.dumps(r) + "\n" for r in records[1:]), encoding="utf-8"
+    )
+    # a separate rollout for another project: its session_meta declares a
+    # foreign cwd and the adapter stops reading the file right there
+    (root / "rollout-foreign.jsonl").write_text(
+        json.dumps(codex_meta("2026-08-05T12:00:00Z", "/somewhere/else")) + "\n"
+        + json.dumps(codex_token_count("2026-08-05T12:00:30Z", {"input_tokens": 5, "output_tokens": 5})) + "\n",
+        encoding="utf-8",
     )
     sessions = transcripts.load_sessions(
         fixture_env["repo_cwd"], root, now=parse_iso8601(NOW), days=30, agents=("codex",)
@@ -103,6 +109,41 @@ def test_codex_error_outputs_and_junk_records_are_skipped(fixture_env, tmp_path)
     assert session.tool_results["c1"].is_error is True  # exit_code 3
     # retry lens sees the failed command
     assert [(cmd, err) for _, cmd, err in session.bash_sequence()] == [("npm test", True)]
+
+
+def test_codex_date_layout_is_pruned_by_window(fixture_env, tmp_path):
+    from conftest import build_codex_transcripts
+
+    root = build_codex_transcripts(tmp_path, fixture_env["repo_cwd"])
+    # cutoff 08-20 minus 16 days -> 08-04: the 08-05 rollout stays
+    sessions = transcripts.load_sessions(
+        fixture_env["repo_cwd"], root, now=parse_iso8601("2026-08-20T00:00:00Z"), days=16, agents=("codex",)
+    )
+    assert len(sessions) == 1
+    # cutoff 08-06: every day-dir (08-05) is pruned, nothing is even listed
+    sessions = transcripts.load_sessions(
+        fixture_env["repo_cwd"], root, now=parse_iso8601("2026-08-07T00:00:00Z"), days=1, agents=("codex",)
+    )
+    assert sessions == []
+
+
+def test_codex_early_exit_on_foreign_cwd(tmp_path, fixture_env):
+    # the wrong-project rollout must be abandoned at its session_meta —
+    # its token_count payload (which would crash parsing if read with a
+    # stale ctx) proves the file was not read to the end
+    root = tmp_path / "codex"
+    root.mkdir()
+    foreign = [
+        codex_meta("2026-08-05T12:00:00Z", "/somewhere/else"),
+        codex_token_count("2026-08-05T12:00:30Z", {"input_tokens": 5, "output_tokens": 5}),
+    ]
+    (root / "foreign.jsonl").write_text(
+        "".join(json.dumps(r) + "\n" for r in foreign), encoding="utf-8"
+    )
+    sessions = transcripts.load_sessions(
+        fixture_env["repo_cwd"], root, now=parse_iso8601(NOW), days=30, agents=("codex",)
+    )
+    assert sessions == []
 
 
 def test_cross_vendor_schema_pollution_is_harmless(fixture_env):

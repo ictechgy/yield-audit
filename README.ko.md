@@ -23,11 +23,27 @@ yield-audit audit --repo . --agent codex
 yield-audit audit --repo . --format json --details
 yield-audit audit --repo . --format markdown > yield-report.md
 
+# AIDD 전환 비교: 전환일을 기준으로 전/후 두 기간의 코호트 비교
+yield-audit aidd --repo . --split 2026-03-01 --days 90
+
 # 환경 점검 (git, 트랜스크립트, 세션 탐지)
 yield-audit doctor --repo /path/to/your/repo
 ```
 
 요구 사항: Python ≥ 3.10, git. 런타임 의존성 없음. 네트워크 호출 없음.
+
+## 시간 창 (상호작용)
+
+| 플래그 | 제어 대상 | 기본값 |
+|---|---|---|
+| `--days` | 세션·커밋 공용 창. `probable` 코호트는 이 창 안의 에이전트 세션 조인으로만 성립 | 30 |
+| `--horizons` | M1 생존 스냅샷 horizon(커밋 이후 일수) | `7,30` |
+| `--rework-days` | M11 리워크 horizon(커밋당) | 14 |
+| `--proximity-hours` | 세션↔커밋 어트리뷰션 시간창 | 24 |
+
+반복 감사는 `~/.cache/yield-audit`의 blame/tree 결과를 재사용합니다(git SHA로
+내용 주소화 — 결과를 바꿀 수 없고 도달 속도만 바꿉니다. `--no-cache`로 비활성,
+`YIELD_AUDIT_CACHE_DIR`로 위치 변경).
 
 ## 측정 렌즈 (v0.1–v0.3)
 
@@ -69,7 +85,8 @@ yield-audit doctor --repo /path/to/your/repo
 ## 로드맵
 
 - ~~**v0.2**~~ — ✅ 출시: 벤더 어댑터 패키지(Claude Code + Codex CLI, `--agent`), 세션 id 네임스페이싱. Gemini는 스키마 확보 후 추가.
-- **v0.3** — ✅ M11 AI 리워크율 출시(코호트 certain/probable/human, `--rework-days`). 남은 항목: M12 정착률(blame 스냅샷), `aidd` 서브커맨드 통합 리포트(코호트 비교 표), 배치 스케줄 조언(M5 확장), 개인 라우팅 힌트(옵트인 리플레이), M13/M14(CI 데이터 의존)
+- **v0.3** — ✅ M11 AI 리워크율 출시(코호트 certain/probable/human, `--rework-days`). 남은 항목: M12 정착률(blame 스냅샷), M13/M14(CI 데이터 의존)
+- **v0.4** — ✅ `aidd` 전환 비교 리포트 출시(전환일 `--split` 기준 전/후 두 기간, 코호트 비교). 영구 캐시·Codex 트랜스크립트 프루닝 포함
 - **v1.x** — 개입 계층(재시도 조기 포기 훅, 결정적 오라클 라우팅) — 각자 증거 게이트 뒤에서
 
 ## 개발

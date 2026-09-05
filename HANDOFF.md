@@ -56,9 +56,9 @@ cohorts.py 코호트 라벨 + lenses/rework.py + `--rework-days` + 리포트 `m1
 
 - [x] PyPI 게시 (v0.3.2) — 신뢰 퍼블리셔(OIDC) `pypi.yml`, 태그 푸시로 게시. README 영어화 + 한국어 README.ko.md 분리, 퀵스타트 `uvx yield-audit` 복원
 - [ ] UNC 경로(`\\host\share`) 자유 텍스트 레닥션 — 현재 README에 문서화된 한계
-- [x] 터치 프리필터(v0.3.1) — path_touch_log 원패스로 무터치 파일 blame 스킵(머지 가드 포함).
+- [x] 터치 프리필터(v0.3.1) + 영구 캐시(v0.4.0, cache.py — blame/tree 내용 주소형).
       스냅샷 캐시 일(day) 버킷팅 옵션은 여전히 백로그 — rev-list/ls-tree 절감용
-- [ ] `doctor`에 트랜스크립트 루트 용량·파일수 리포트 추가(사용자가 사전 감사 가능하도록)
+- [x] `doctor` 용량·파일수·에이전트별 세션 수 리포트 (v0.4.0)
 - [ ] v0.3 잔여: M12 정착률(blame 스냅샷, `--snapshot` 서브커맨드), M5 기반 배치 스케줄 조언, M6 개인 라우팅 힌트(옵트인 리플레이) — M11은 0.3.0으로 출시됨(기획서-AIDD의 M11 인간 수정 시간과는 별개 표기 정리 필요 없음, 해당 항목은 M13/M14로 통합 검토)
 
 ## 4. 절대 어기지 말 것 (회귀 방지)

@@ -6,9 +6,10 @@ AI 코딩 에이전트(ZCode, Claude Code 등)가 이 저장소에서 작업할 
 
 ## 이 프로젝트가 하는 일
 
-AI 코딩 에이전트(Claude Code)의 로컬 세션 트랜스크립트와 git 이력을 대조해 **성과를 회계**합니다:
+AI 코딩 에이전트(Claude Code/Codex)의 로컬 세션 트랜스크립트와 git 이력을 대조해 **성과를 회계**합니다:
 무엇이 살아남았는지(M1 생존율), 무엇이 낭비였는지(M2), 재시도 세금(M3), 채택 작업당 비용(M4),
-캐시 지역성(M5), 검증 공백(M8), AI 리워크율(M11, 코호트 certain/probable/human). 원칙: **완전 로컬, 읽기 전용, 결정적, 런타임 의존성 0**
+캐시 지역성(M5), 검증 공백(M8), AI 리워크율(M11, 코호트 certain/probable/human).
+`aidd` 서브커맨드는 전환일 기준 전/후 두 기간의 코호트 비교 리포트를 낸다. 원칙: **완전 로컬, 읽기 전용, 결정적, 런타임 의존성 0**
 (Python ≥3.10 표준라이브러리 + git CLI), **절감 주장 금지 — 측정만**.
 
 ## 명령어
@@ -33,6 +34,7 @@ yield-audit audit --repo <tmp fixture repo> --transcripts-dir <tmp fixtures> --n
 
 ```
 cli.py            argparse, 종료코드 0/2, stdout 로케일 방어
+  └─ aidd.py       전환일 기준 2기간 코호트 비교 (run_audit 2회 재사용)
   └─ audit.py     파이프라인 오케스트레이터 — 리포트 dict 조립, 마지막에 deep_sanitize
        ├─ transcripts/     벤더 어댑터 패키지: base(공통 계약·레지스트리) + claude + codex
        │                   → events.Session (키 기반 방어적 파싱, 세션 id는 "vendor:<raw>" 네임스페이스)
@@ -41,6 +43,7 @@ cli.py            argparse, 종료코드 0/2, stdout 로케일 방어
        ├─ cohorts.py       커밋 코호트 라벨 (certain=푸터/probable=세션 조인/human — 근거 등급, 판정 아님)
        ├─ pricing/costs    공시 요금표(USD/MTok)와 관측 usage 기반 비용
        ├─ lenses/          M1–M11 측정 렌즈 (순수 함수 — 하위 AGENTS.md 참고)
+       ├─ cache.py         ~/.cache/yield-audit 영구 캐시 (blame/tree — 내용 주소형, 무효화 불필요)
        ├─ redact.py        출력 경계: 살균·레닥션·deep_sanitize
        └─ report.py        console/json/markdown 렌더러
 ```

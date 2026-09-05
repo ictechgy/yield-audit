@@ -39,11 +39,27 @@ yield-audit audit --repo . --agent codex
 yield-audit audit --repo . --format json --details
 yield-audit audit --repo . --format markdown > yield-report.md
 
+# AI-transition comparison: two windows split at your rollout date
+yield-audit aidd --repo . --split 2026-03-01 --days 90
+
 # environment check (git, transcript roots, session discovery)
 yield-audit doctor --repo /path/to/your/repo
 ```
 
-Requirements: Python ≥ 3.10, git. No runtime dependencies. No network calls.
+Requirements: Python >= 3.10, git. No runtime dependencies. No network calls.
+
+## Time windows (and how they interact)
+
+| Flag | Controls | Default |
+|---|---|---|
+| `--days` | the session **and** commit window; the `probable` cohort exists only where an agent session falls inside it | 30 |
+| `--horizons` | M1 survival snapshot horizons (days after each commit) | `7,30` |
+| `--rework-days` | M11 rework horizon per commit | 14 |
+| `--proximity-hours` | session-to-commit attribution window | 24 |
+
+A repeat audit reuses blame/tree results from `~/.cache/yield-audit`
+(content-addressed by git SHA — it can never change an output, only how
+fast it arrives; `--no-cache` opts out, `YIELD_AUDIT_CACHE_DIR` relocates).
 
 ## Sample output
 
@@ -142,8 +158,11 @@ reworked within 14d, by cohort (evidence-graded, not verdicts):
   `--agent`), namespaced session ids. Gemini lands once its schema is
   grounded.
 - **v0.3** — ✅ M11 AI rework rate shipped (cohorts certain/probable/human,
-  `--rework-days`). Remaining: M12 settle rate (blame snapshots), the `aidd`
-  cohort-comparison report, M13/M14 (external CI data).
+  `--rework-days`). Remaining: M12 settle rate (blame snapshots),
+  M13/M14 (external CI data).
+- **v0.4** — ✅ `aidd` transition report shipped: two windows split at a
+  rollout date, AI-vs-human rework cohorts per period (`--split`, `--days`),
+  plus a persistent content-addressed cache and Codex transcript pruning.
 - **v1.x** — intervention layer (retry early-abort hooks, deterministic
   oracle routing) — each behind its own evidence gate.
 

@@ -93,7 +93,7 @@ class TranscriptAdapter:
     def default_root(self) -> Path:
         raise NotImplementedError
 
-    def iter_files(self, root: Path, repo_real: str, logger=None) -> list[Path]:
+    def iter_files(self, root: Path, repo_real: str, logger=None, since=None) -> list[Path]:
         files = walk_jsonl(root)
         if logger:
             logger(f"[{self.name}] scanning {root} ({len(files)} files)")
@@ -111,11 +111,15 @@ class TranscriptAdapter:
                 except json.JSONDecodeError:
                     continue
                 if isinstance(record, dict):
-                    self.handle_record(record, ctx, jsonl_path, repo_real, sessions)
+                    if self.handle_record(record, ctx, jsonl_path, repo_real, sessions) is False:
+                        return  # adapter proved the rest of the file is irrelevant
 
     def handle_record(
         self, record: dict, ctx: dict, path: Path, repo_real: str, sessions: dict[str, Session]
-    ) -> None:
+    ) -> None | bool:
+        """Parse one decoded record. Return ``False`` to stop reading this file
+        (used by adapters that can prove the remaining records are for a
+        different repository)."""
         raise NotImplementedError
 
     # --- shared session bookkeeping -------------------------------------
