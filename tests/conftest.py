@@ -389,3 +389,36 @@ def fixture_env_multi(fixture_env, tmp_path):
     env = dict(fixture_env)
     env["multi_root"] = parent
     return env
+
+
+# --- Codex CLI current-format fixtures (custom_tool_call, verified
+# --- 2026-09-06 against real ~/.codex/sessions rollouts) ---------------
+
+def codex_exec_call(ts: str, call_id: str, command: str, status: str = "completed") -> dict:
+    return {
+        "timestamp": ts,
+        "type": "response_item",
+        "payload": {"type": "custom_tool_call", "call_id": call_id, "name": "exec",
+                    "input": command, "status": status},
+    }
+
+
+def codex_exec_call_output(ts: str, call_id: str) -> dict:
+    return {
+        "timestamp": ts,
+        "type": "response_item",
+        "payload": {
+            "type": "custom_tool_call_output",
+            "call_id": call_id,
+            "output": [{"type": "input_text", "text": "echo"}],
+        },
+    }
+
+
+def codex_write_file_call(ts: str, call_id: str, path: str) -> dict:
+    return {
+        "timestamp": ts,
+        "type": "response_item",
+        "payload": {"type": "function_call", "call_id": call_id, "name": "write_file",
+                    "arguments": json.dumps({"path": path, "text": "..."})},
+    }

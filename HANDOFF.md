@@ -70,6 +70,7 @@ cohorts.py 코호트 라벨 + lenses/rework.py + `--rework-days` + 리포트 `m1
       스냅샷 캐시 일(day) 버킷팅 옵션은 여전히 백로그 — rev-list/ls-tree 절감용
 - [x] `doctor` 용량·파일수·에이전트별 세션 수 리포트 (v0.4.0)
 - [x] M12 정착률 출시(v0.5.0, `--settle-days` + `snapshot` 캐시 예열 서브커맨드). M14 인시던트 출처 코호트도 로컬 계량으로 출시(fix 커밋 전후 blame 차감). M13(검증 세금 전이)은 외부 CI 데이터 필요 — 옵트인 네트워크 설계 승인 전까지 보류
+- [x] M13 출시 (v0.6.0, 운영자 파일 방식 `--ci-runs` — 네트워크 0 유지). Codex 스키마 실데이터 검증 완료(2026-09-06, custom_tool_call/exec·status 오류·write_file·cache_write 토큰). 어댑터 기여 가이드 CONTRIBUTING.md + 이슈 템플릿 추가
 - [ ] v0.3 잔여: M5 기반 배치 스케줄 조언, M6 개인 라우팅 힌트(옵트인 리플레이)
 
 ## 4. 절대 어기지 말 것 (회귀 방지)

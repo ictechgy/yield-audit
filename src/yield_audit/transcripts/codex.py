@@ -4,25 +4,41 @@ Reads the local JSONL "rollout" session logs (``~/.codex/sessions/YYYY/MM/DD/
 rollout-<ts>-<uuid>.jsonl``) produced by the OpenAI Codex CLI (codex-rs) and
 normalizes them into :class:`yield_audit.events.Session` objects.
 
-Schema grounding (rollout format observed 2026-09; parsed defensively — when
-a future client renames keys, records degrade to skips, never crashes):
+Schema grounding — verified 2026-09-06 against 30 real rollout files
+(~/.codex/sessions, codex CLI 2026-09 era); parsed defensively so a future
+client renaming keys degrades to skips, never crashes. Two record families
+coexist in real data:
 
-- Every record carries ``timestamp`` (ISO-8601 UTC) and a ``type``:
-  ``session_meta``, ``turn_context``, ``response_item``, or ``event_msg``.
-- ``session_meta.payload`` carries the rollout's ``id`` and ``cwd``.
-- ``turn_context.payload`` repeats ``cwd`` and carries the ``model`` in
-  effect for subsequent turns.
-- ``response_item.payload`` is a Chat-Completions-style item:
-  ``function_call`` (``call_id``/``name``/``arguments``) and
-  ``function_call_output`` (``call_id``/``output``).
-- ``event_msg.payload`` of type ``token_count`` carries ``info.last_token_usage``
-  (``input_tokens``, ``cached_input_tokens``, ``output_tokens``).
+Current format (custom tools):
+- ``response_item/custom_tool_call``: ``call_id``/``name``/``input``/``status``.
+  ``exec`` is the shell (``input`` = the raw command text); ``status`` marks
+  the call's outcome ("completed" observed; anything else counts as error —
+  the matching ``custom_tool_call_output`` only echoes ``input_text`` items
+  and carries no exit code).
+- ``response_item/custom_tool_call_output``: ``call_id``/``output`` (list of
+  ``{type, text}`` echo items).
+- ``event_msg/token_count.info.last_token_usage``: ``input_tokens``,
+  ``cached_input_tokens``, ``cache_write_input_tokens``, ``output_tokens``.
 
-Vendor tool names are normalized to the canonical set every lens understands:
-shell execution (``shell``/``local_shell``/``exec_command``) becomes ``Bash``
-with a joined command string; ``apply_patch`` edits are folded into
-``Session.edited_files`` via the patch's ``*** (Add|Update|Delete) File``
-headers. Compaction boundaries are not emitted by this format and stay empty.
+Legacy/agent format (function calls — still emitted for orchestration tools
+and ``write_file``):
+- ``response_item/function_call``: ``call_id``/``name``/``arguments`` (JSON
+  string; agent tools like ``spawn_agent``/``wait_agent`` appear here).
+  ``write_file`` arguments carry ``path`` (or ``file_path``) + ``text``.
+- ``response_item/function_call_output``: ``call_id``/``output`` (JSON
+  envelope with ``metadata.exit_code`` in older clients).
+
+Shared envelope: every record has ``timestamp`` (ISO-8601 UTC) and a type
+(``session_meta`` with ``payload.id``/``cwd``, ``turn_context`` with
+``payload.cwd``/``model``, ``response_item``, ``event_msg``;
+``token_usage_record`` and ``world_state`` are skipped — usage arrives via
+``token_count``).
+
+Vendor tool names are normalized to the canonical set every lens
+understands: shell execution (``exec``/``shell``/``local_shell``/
+``exec_command``) becomes ``Bash``; edits (``write_file``, ``apply_patch``
+patches) are folded into ``Session.edited_files``. Compaction boundaries are
+not emitted by this format and stay empty.
 """
 
 from __future__ import annotations
@@ -35,7 +51,8 @@ from pathlib import Path
 from ..events import ApiCall, Session, ToolResult, ToolUse, parse_iso8601
 from .base import TranscriptAdapter, _int, normalize_path
 
-SHELL_TOOLS = {"shell", "local_shell", "exec_command"}
+SHELL_TOOLS = {"exec", "shell", "local_shell", "exec_command"}
+WRITE_FILE_KEYS = ("path", "file_path")
 PATCH_FILE_RE = re.compile(r"^\*\*\* (?:Add|Update|Delete) File: (.+)$", re.MULTILINE)
 
 
@@ -160,13 +177,23 @@ class CodexAdapter(TranscriptAdapter):
                 input_tokens=_int(usage.get("input_tokens")),
                 output_tokens=_int(usage.get("output_tokens")),
                 cache_read_tokens=_int(usage.get("cached_input_tokens")),
-                cache_write_tokens=0,
+                cache_write_tokens=_int(usage.get("cache_write_input_tokens")),
             )
         )
 
     def _ingest_response_item(self, payload: dict, ts, session: Session) -> None:
         ptype = payload.get("type")
-        if ptype == "function_call":
+        if ptype == "custom_tool_call":
+            self._ingest_custom_tool_call(payload, ts, session)
+        elif ptype == "custom_tool_call_output":
+            call_id = payload.get("call_id")
+            if isinstance(call_id, str) and call_id and call_id not in session.tool_results:
+                # current-format outputs only echo input text; the call's own
+                # status (recorded above) decides success vs failure
+                session.tool_results[call_id] = ToolResult(
+                    tool_use_id=call_id, ts=ts, is_error=False
+                )
+        elif ptype == "function_call":
             call_id = payload.get("call_id")
             name = payload.get("name")
             if not isinstance(call_id, str) or not isinstance(name, str):
@@ -179,6 +206,10 @@ class CodexAdapter(TranscriptAdapter):
                 )
                 if command:
                     self.note_command(session, command)
+            elif name == "write_file":
+                session.tool_uses.append(ToolUse(id=call_id, ts=ts, name=name, input=args))
+                for key in WRITE_FILE_KEYS:
+                    self.note_edit(session, args.get(key))
             elif name == "apply_patch":
                 session.tool_uses.append(ToolUse(id=call_id, ts=ts, name=name, input={}))
                 for file_path in _patch_files(args):
@@ -194,6 +225,30 @@ class CodexAdapter(TranscriptAdapter):
                 ts=ts,
                 is_error=_output_is_error(payload.get("output")),
             )
+
+    def _ingest_custom_tool_call(self, payload: dict, ts, session: Session) -> None:
+        call_id = payload.get("call_id")
+        name = payload.get("name")
+        if not isinstance(call_id, str) or not isinstance(name, str):
+            return
+        status = payload.get("status")
+        is_error = isinstance(status, str) and status != "completed"
+        session.tool_results[call_id] = ToolResult(tool_use_id=call_id, ts=ts, is_error=is_error)
+        raw_input = payload.get("input")
+        text = raw_input if isinstance(raw_input, str) else None
+        if name in SHELL_TOOLS:
+            session.tool_uses.append(
+                ToolUse(id=call_id, ts=ts, name="Bash", input={"command": text} if text else {})
+            )
+            if text:
+                self.note_command(session, text)
+        elif name == "apply_patch":
+            session.tool_uses.append(ToolUse(id=call_id, ts=ts, name=name, input={}))
+            if text and "*** Begin Patch" in text:
+                for file_path in PATCH_FILE_RE.findall(text):
+                    self.note_edit(session, file_path)
+        else:
+            session.tool_uses.append(ToolUse(id=call_id, ts=ts, name=name, input={}))
 
 
 def _parse_arguments(raw) -> dict:

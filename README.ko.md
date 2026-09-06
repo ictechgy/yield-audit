@@ -72,6 +72,7 @@ yield-audit export --perfetto --repo . --out session.perfetto.json
 | **M11 AI 리워크율** | AI 표지 커밋은 인간 커밋보다 rework horizon(기본 14일, `--rework-days`) 내 얼마나 더 재작성되나. 코호트 근거(certain=푸터/probable=세션 조인/human) 분포 동봉 — 판정 도구가 아닌 계량 도구 | git history 기반 측정 |
 | **M12 정착율** | AI가 쓴 코드는 몇 달 뒤에도 살아있나. settle horizon(기본 90일, `--settle-days`)의 코호트별 생존율 — M11의 긴 horizon 여집합 | git history 기반 측정 |
 | **M14 인시던트 출처** | fix/revert/rollback 커밋은 누의 줄을 지적했나. fix 커밋 전후 blame 카운트 감소를 출처 커밋 코호트로 귀속 | proxy |
+| **M13 검증 세금 전이** | 생성이 싸진 대가가 CI로 옮겨갔나. 커밋당 CI 실행 수·비통과 수를 AI vs human 코호트로 — 사용자가 직접 내보낸 CI 파일로 측정(`gh run list --json … > ci.json` 후 `--ci-runs ci.json`). yield-audit 자체는 영구 네트워크 0 | 제공된 내보내기 관측 |
 
 ### 정직성 계약
 
@@ -103,7 +104,8 @@ yield-audit export --perfetto --repo . --out session.perfetto.json
 - ~~**v0.2**~~ — ✅ 출시: 벤더 어댑터 패키지(Claude Code + Codex CLI, `--agent`), 세션 id 네임스페이싱. Gemini는 스키마 확보 후 추가.
 - **v0.3** — ✅ M11 AI 리워크율 출시(코호트 certain/probable/human, `--rework-days`). 남은 항목: M12 정착률(blame 스냅샷), M13/M14(CI 데이터 의존)
 - **v0.4** — ✅ `aidd` 전환 비교 리포트 출시(전환일 `--split` 기준 전/후 두 기간, 코호트 비교). 영구 캐시·Codex 트랜스크립트 프루닝 포함
-- **v0.5** — ✅ M12 정착율(`--settle-days`)·M14 인시던트 출처 코호트 출시, `snapshot`(캐시 예열), Perfetto 내보내기(`export --perfetto`, 선택 extra). M13(검증 세금 전이)은 외부 CI 데이터가 필요해 로컬 전용 원칙 때문에 명시적 옵트인 설계 전까지 보류
+- **v0.5** — ✅ M12 정착율(`--settle-days`)·M14 인시던트 출처 코호트 출시, `snapshot`(캐시 예열), Perfetto 내보내기(`export --perfetto`, 선택 extra)
+- **v0.6** — ✅ M13 검증 세금 전이 출시(운영자 파일 방식 `--ci-runs`, 네트워크 0 — gh가 가져오고 yield-audit는 파일을 읽음). Codex 어댑터 실데이터 검증 완료(`custom_tool_call`/`exec`, status 기반 오류, `write_file` 편집, 캐시 쓰기 토큰). 어댑터 기여 가이드(CONTRIBUTING.md) 추가
 - **v1.x** — 개입 계층(재시도 조기 포기 훅, 결정적 오라클 라우팅) — 각자 증거 게이트 뒤에서
 
 ## 개발

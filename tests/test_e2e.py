@@ -364,3 +364,48 @@ def test_doctor_reports_environment(fixture_env, capsys):
     assert "git on PATH: True" in out
     assert "sessions with cwd == repo (all agents): 3" in out
     assert "agent claude: sessions with cwd == repo: 3" in out
+
+
+def test_m13_verify_transfer_with_ci_export(fixture_env, tmp_path, capsys):
+    from yield_audit import gitdata as gd
+
+    by_summary = {
+        c.summary: c.sha for c in gd.commits_with_numstat(fixture_env["repo_cwd"], since=None, until=None)
+    }
+    runs = [
+        {"databaseId": 1, "headSha": by_summary["c1: initial work"], "conclusion": "success", "workflowName": "CI"},
+        {"databaseId": 2, "headSha": by_summary["c1: initial work"], "conclusion": "failure", "workflowName": "CI"},
+        {"databaseId": 3, "headSha": by_summary["c3: add feature notes"], "conclusion": "success", "workflowName": "CI"},
+        {"databaseId": 4, "headSha": by_summary["c3: add feature notes"], "conclusion": "cancelled", "workflowName": "CI"},
+        {"databaseId": 5, "headSha": by_summary["fix: correct feature notes"], "conclusion": "success", "workflowName": "CI"},
+        {"databaseId": 6, "headSha": "0" * 40, "conclusion": "success", "workflowName": "CI"},  # foreign sha
+    ]
+    ci = tmp_path / "ci-runs.json"
+    ci.write_text(json.dumps(runs), encoding="utf-8")
+
+    code = main([*audit_argv(fixture_env), "--format", "json", "--ci-runs", str(ci)])
+    assert code == 0
+    data = json.loads(capsys.readouterr().out)
+    m13 = data["m13_verify_transfer"]
+    assert m13["enabled"] is True
+    assert m13["runs_total"] == 6 and m13["runs_joined"] == 5 and m13["runs_ignored"] == 1
+    by = m13["by_cohort"]
+    assert by["probable"]["runs"] == 2 and by["probable"]["not_passing"] == 1
+    assert by["probable"]["not_passing_rate"] == 0.5
+    assert by["certain"]["runs"] == 2 and by["certain"]["not_passing"] == 1  # cancelled = not passing
+    assert by["human"]["runs"] == 1 and by["human"]["not_passing"] == 0
+    assert by["ai_combined"]["runs"] == 4
+
+
+def test_m13_disabled_without_file(report):
+    m13 = report["m13_verify_transfer"]
+    assert m13["enabled"] is False and m13["by_cohort"] == {}
+    assert any("disabled" in n for n in m13["notes"])
+
+
+def test_m13_rejects_non_array(fixture_env, tmp_path, capsys):
+    bad = tmp_path / "bad.json"
+    bad.write_text('{"not": "a list"}', encoding="utf-8")
+    code = main([*audit_argv(fixture_env), "--ci-runs", str(bad)])
+    assert code == 2
+    assert "--ci-runs" in capsys.readouterr().err

@@ -8,11 +8,14 @@ from conftest import (
     CODEX_PATCH,
     NOW,
     SESSION_D,
+    codex_exec_call,
+    codex_exec_call_output,
     codex_function_call,
     codex_function_call_output,
     codex_meta,
     codex_token_count,
     codex_turn_context,
+    codex_write_file_call,
 )
 from yield_audit import transcripts
 from yield_audit.cli import main
@@ -207,3 +210,58 @@ def test_unknown_agent_flag_fails_cleanly(fixture_env, capsys):
     )
     assert code == 2
     assert "unknown agent" in capsys.readouterr().err
+
+
+def test_current_format_exec_and_status(fixture_env, tmp_path):
+    """custom_tool_call (exec) — the format real rollouts use since 2026-09."""
+    root = tmp_path / "codex"
+    root.mkdir()
+    records = [
+        codex_meta("2026-08-05T11:00:00Z", fixture_env["repo_cwd"]),
+        codex_turn_context("2026-08-05T11:00:01Z", fixture_env["repo_cwd"]),
+        codex_token_count(
+            "2026-08-05T11:00:30Z",
+            {"input_tokens": 100, "cached_input_tokens": 60,
+             "cache_write_input_tokens": 40, "output_tokens": 20},
+        ),
+        codex_exec_call("2026-08-05T11:00:40Z", "x1", "pytest -q"),
+        codex_exec_call_output("2026-08-05T11:00:50Z", "x1"),
+        codex_exec_call("2026-08-05T11:01:00Z", "x2", "pytest -q", status="failed"),
+        codex_exec_call_output("2026-08-05T11:01:10Z", "x2"),
+        codex_exec_call("2026-08-05T11:01:20Z", "x3", "git commit -m x"),
+        codex_exec_call_output("2026-08-05T11:01:30Z", "x3"),
+    ]
+    (root / "rollout-new.jsonl").write_text(
+        "".join(json.dumps(r) + "\n" for r in records), encoding="utf-8"
+    )
+    sessions = transcripts.load_sessions(
+        fixture_env["repo_cwd"], root, now=parse_iso8601(NOW), days=30, agents=("codex",)
+    )
+    session = sessions[0]
+    # raw exec input becomes the Bash command; commit detection works
+    assert [(u.input.get("command"), session.tool_results[u.id].is_error) for u in session.tool_uses] == [
+        ("pytest -q", False),
+        ("pytest -q", True),  # status != completed marks the error
+        ("git commit -m x", False),
+    ]
+    assert session.ran_git_commit is True
+    # cache_write_input_tokens now flows through (was hardcoded 0)
+    assert session.api_calls[0].cache_write_tokens == 40
+
+
+def test_current_format_write_file_maps_to_edit(fixture_env, tmp_path):
+    root = tmp_path / "codex"
+    root.mkdir()
+    records = [
+        codex_meta("2026-08-05T11:00:00Z", fixture_env["repo_cwd"]),
+        codex_turn_context("2026-08-05T11:00:01Z", fixture_env["repo_cwd"]),
+        codex_write_file_call("2026-08-05T11:00:40Z", "w1", fixture_env["repo_cwd"] + "/notes.md"),
+    ]
+    (root / "rollout-w.jsonl").write_text(
+        "".join(json.dumps(r) + "\n" for r in records), encoding="utf-8"
+    )
+    sessions = transcripts.load_sessions(
+        fixture_env["repo_cwd"], root, now=parse_iso8601(NOW), days=30, agents=("codex",)
+    )
+    transcripts.group_edit_files_by_repo(sessions, fixture_env["repo_cwd"])
+    assert sessions[0].edited_files == ["notes.md"]

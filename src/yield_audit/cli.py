@@ -92,6 +92,12 @@ def _build_parser() -> argparse.ArgumentParser:
         help="M12 settle-rate horizon in days (default 90, 0 = skip)",
     )
     p_audit.add_argument(
+        "--ci-runs",
+        type=Path,
+        default=None,
+        help="gh CI export for the M13 lens: gh run list -R owner/repo --json databaseId,headSha,conclusion > ci.json",
+    )
+    p_audit.add_argument(
         "--no-cache",
         action="store_true",
         help="skip the persistent blame/tree cache (~/.cache/yield-audit; content-addressed by git SHA, never affects output)",
@@ -253,6 +259,7 @@ def _run_audit(args) -> int:
         rework_days=args.rework_days,
         settle_days=args.settle_days,
         use_cache=not args.no_cache,
+        ci_runs_path=str(args.ci_runs) if args.ci_runs else None,
         log=_stderr_logger,
     )
     _emit(report, args)

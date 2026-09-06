@@ -33,5 +33,6 @@ dataclass를 반환하는 **순수 함수**. 리포트 JSON 조립은 `../audit.
 | `rework.py` | M11 AI 리워크율 (코호트 비교) | 라벨은 근거 등급(certain/probable/human)이지 판정 아님; rework = added − 생존(blame); ai_combined은 certain+probable 합 |
 | `settle.py` | M12 코호트 정착율 (긴 horizon) | settle = 같은 horizon의 rework 여집합; horizon이 다른 점이 존재 이유. 무터치 파일은 blame 없이 생존 확정 |
 | `incident.py` | M14 fix/revert 출처 코호트 | blame 카운트 감소 = 삭제+재작성 모두 포함된 proxy; 측정 라벨은 proxy로 고정 |
+| `verify_transfer.py` | M13 검증 세금 전이 (CI) | 네트워크 금지 — 운영자가 내보낸 gh JSON 파일만 입력(`--ci-runs`); not-passing = success 외 완결 결론, 진행 중(null) 제외 |
 
 새 렌즈 추가 시 이 표의 한 줄과 루트 AGENTS.md의 measurement 라벨을 함께 업데이트한다.

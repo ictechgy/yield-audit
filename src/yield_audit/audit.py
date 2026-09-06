@@ -25,6 +25,7 @@ from .lenses.rework import analyze_rework
 from .lenses.settle import analyze_settle
 from .lenses.survival import analyze_survival
 from .lenses.verify_gap import analyze_verify_gap
+from .lenses.verify_transfer import analyze_verify_transfer, parse_ci_runs
 from .lenses.waste import analyze_waste
 from .pricing import load_pricing
 
@@ -53,6 +54,7 @@ def run_audit(
     since: datetime | None = None,
     until: datetime | None = None,
     use_cache: bool = True,
+    ci_runs_path: str | None = None,
     log=None,
 ) -> dict:
     if not gitdata.is_git_repo(repo):
@@ -178,6 +180,17 @@ def run_audit(
     )
     incidents = analyze_incidents(repo_real, commits, cohort_labels, blame_cache=blame_cache)
 
+    ci_runs = None
+    if ci_runs_path is not None:
+        import json as _json
+
+        try:
+            with open(ci_runs_path, encoding="utf-8") as handle:
+                ci_runs = parse_ci_runs(_json.load(handle))
+        except (OSError, ValueError) as exc:
+            raise AuditError(f"--ci-runs could not be read as a gh JSON export: {exc}") from exc
+    verify_transfer = analyze_verify_transfer(commits, cohort_labels, ci_runs)
+
     unknown_models: set[str] = set()
     for cost in cost_objects.values():
         unknown_models |= cost.unknown_models
@@ -222,6 +235,7 @@ def run_audit(
         "m11_rework": _rework_block(rework, details),
         "m12_settle": _settle_block(settle, details),
         "m14_incident": _incident_block(incidents),
+        "m13_verify_transfer": _verify_transfer_block(verify_transfer),
         "notes": _global_notes(pricing_notes) + git_warnings + log_messages[:20],
     }
     if use_cache:
@@ -448,6 +462,19 @@ def _settle_block(settle, details: bool) -> dict:
     if details:
         block["commits"] = settle.commits[:200]
         block["commits_truncated"] = max(0, len(settle.commits) - 200)
+    return block
+
+
+def _verify_transfer_block(result) -> dict:
+    block = {
+        "measurement": "observed_from_provided_ci_export",
+        "enabled": result.enabled,
+        "runs_total": result.runs_total,
+        "runs_joined": result.runs_joined,
+        "runs_ignored": result.runs_ignored,
+        "by_cohort": {label: info for label, info in sorted(result.by_cohort.items())},
+        "notes": result.notes,
+    }
     return block
 
 

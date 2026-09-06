@@ -4,6 +4,34 @@ All notable changes to yield-audit are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning is
 SemVer.
 
+## [0.6.0] - 2026-09-06
+
+The M-series is complete (everything locally measurable) and the Codex
+adapter is verified against real data.
+
+### Added
+- M13 verification-tax transfer (`lenses/verify_transfer.py`,
+  `--ci-runs`): CI runs and non-passing runs per commit by cohort,
+  joined on `headSha` from an operator-provided `gh run list --json`
+  export. yield-audit itself performs no network calls — gh fetches,
+  the lens reads the file. Not-passing = any completed conclusion other
+  than success; in-progress runs excluded. Report block
+  `m13_verify_transfer` (additive).
+- `CONTRIBUTING.md`: adapter and lens contribution contracts, including
+  the schema-grounding protocol (real samples before synthetic
+  fixtures), plus a new-transcript-adapter issue template.
+
+### Changed — Codex adapter verified against real rollouts (2026-09-06)
+- Real `~/.codex/sessions` rollouts use `custom_tool_call` (name
+  `exec`, raw-text command input, `status`-based outcomes) alongside
+  legacy `function_call` (agent orchestration tools, `write_file`
+  edits); outputs only echo input and carry no exit code. The adapter
+  now handles both families: `exec` → `Bash`, non-completed status →
+  tool error, `write_file`(`path`/`file_path`) → edited files, and
+  `cache_write_input_tokens` is read instead of hardcoded 0. Validated
+  end-to-end on real sessions (18 sessions / 1,196 API calls / 994
+  Bash commands parsed in 0.8s with pruning + early-exit).
+
 ## [0.5.0] - 2026-09-06
 
 The `export` subcommand: session timelines as trace files for other tools.

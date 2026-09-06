@@ -19,7 +19,9 @@ what the tokens left behind.
   `--now` pins a run for reproducibility.
 - **Zero runtime dependencies** — Python ≥ 3.10 stdlib + the `git` CLI.
 - **Vendor-neutral** — scans Claude Code (`~/.claude/projects`) and Codex
-  CLI (`~/.codex/sessions`) transcripts; more adapters via a registry.
+  CLI (`~/.codex/sessions`, schema verified against real rollouts)
+  transcripts; more adapters via a registry ([contributing
+  guide](CONTRIBUTING.md)).
 
 ## Quick start
 
@@ -120,6 +122,7 @@ reworked within 14d, by cohort (evidence-graded, not verdicts):
 | **M11 AI rework rate** | How much faster is AI-marked output reworked than human output within the rework horizon (default 14d, `--rework-days`)? Ships with cohort evidence (certain = AI footer / probable = session join / human) — a measurement, not a verdict | measured from git history |
 | **M12 settle rate** | Is AI-marked code still there months later? Cohort survival at the settle horizon (default 90d, `--settle-days`) — the complement of M11 at a longer horizon | measured from git history |
 | **M14 incident origins** | When fix/revert/rollback commits land, whose lines were they pointing at? Blame-count drops across fix commits, attributed to origin-commit cohorts | proxy |
+| **M13 verification-tax transfer** | Did the cost move to CI? Runs and non-passing runs per commit, AI vs human cohorts — from a CI export **you** fetch (`gh run list --json … > ci.json`, then `--ci-runs ci.json`); yield-audit itself never touches the network | observed from provided export |
 
 ### Honesty contract
 
@@ -181,9 +184,13 @@ reworked within 14d, by cohort (evidence-graded, not verdicts):
   plus a persistent content-addressed cache and Codex transcript pruning.
 - **v0.5** — ✅ M12 settle rate (`--settle-days`) and M14 incident-origin
   cohorts shipped, plus `snapshot` (cache pre-warming) and a Perfetto
-  export (`export --perfetto`, optional extra). M13 (verification-tax
-  transfer) stays deferred: it needs external CI data, which the
-  local-only contract forbids until an explicit opt-in design exists.
+  export (`export --perfetto`, optional extra).
+- **v0.6** — ✅ M13 verification-tax transfer shipped via the
+  operator-file pattern (`--ci-runs`, zero network calls — gh fetches,
+  yield-audit reads). Codex adapter schema verified against real
+  rollouts (`custom_tool_call`/`exec`, status-based errors,
+  `write_file` edits, cache-write tokens); adapter contribution guide
+  added (CONTRIBUTING.md).
 - **v1.x** — intervention layer (retry early-abort hooks, deterministic
   oracle routing) — each behind its own evidence gate.
 
